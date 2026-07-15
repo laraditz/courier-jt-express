@@ -1,7 +1,7 @@
 # Group 4: JT Express Scaffolding & Client
 
 **Branch:** feature/jt-express-scaffolding
-**Status:** pending
+**Status:** done
 **Parent plan:** 2026-07-15-jt-express-driver-plan.md
 **Repo:** laraditz/courier-jt-express
 **Depends on:** Group 1 (merged)

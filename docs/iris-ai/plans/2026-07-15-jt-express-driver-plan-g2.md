@@ -1,7 +1,7 @@
 # Group 2: Lalamove Compatibility
 
 **Branch:** feature/lalamove-get-shipment-compat
-**Status:** pending
+**Status:** done
 **Parent plan:** 2026-07-15-jt-express-driver-plan.md
 **Repo:** laraditz/courier-lalamove
 **Depends on:** Group 1 (merged)

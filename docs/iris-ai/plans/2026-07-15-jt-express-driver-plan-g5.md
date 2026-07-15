@@ -1,7 +1,7 @@
 # Group 5: JT Express Driver, Mappers & Webhook
 
 **Branch:** feature/jt-express-driver
-**Status:** pending
+**Status:** done
 **Parent plan:** 2026-07-15-jt-express-driver-plan.md
 **Repo:** laraditz/courier-jt-express
 **Depends on:** Group 4 (merged)
