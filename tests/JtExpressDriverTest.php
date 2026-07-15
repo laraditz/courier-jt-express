@@ -15,7 +15,9 @@ use Laraditz\Courier\DTOs\Shared\Parcel;
 use Laraditz\Courier\Exceptions\InvalidPayloadException;
 use Laraditz\Courier\Exceptions\ShipmentNotFoundException;
 use Laraditz\Courier\Exceptions\UnsupportedOperationException;
+use Illuminate\Http\Request;
 use Laraditz\Courier\JtExpress\Http\JtExpressClient;
+use Laraditz\Courier\JtExpress\Http\JtExpressSigner;
 use Laraditz\Courier\JtExpress\JtExpressDriver;
 
 class JtExpressDriverTest extends TestCase
@@ -309,5 +311,30 @@ class JtExpressDriverTest extends TestCase
             origin: new Location('50000', 'Kuala Lumpur', 'WP', 'MY'),
             destination: new Location('10000', 'Georgetown', 'Penang', 'MY'),
         ));
+    }
+
+    public function test_verify_webhook_returns_true_for_valid_signature(): void
+    {
+        $config    = ['private_key' => 'test-private-key'];
+        $bizContent = '{"billCode":"BC001"}';
+        $digest    = (new JtExpressSigner('test-private-key'))->digest($bizContent);
+
+        $driver  = new JtExpressDriver($config, $this->makeClient());
+        $request = Request::create('/courier/webhook/jtexpress', 'POST', ['bizContent' => $bizContent]);
+        $request->headers->set('digest', $digest);
+
+        $this->assertTrue($driver->verifyWebhook($request));
+    }
+
+    public function test_verify_webhook_returns_false_for_invalid_signature(): void
+    {
+        $config     = ['private_key' => 'test-private-key'];
+        $bizContent = '{"billCode":"BC001"}';
+
+        $driver  = new JtExpressDriver($config, $this->makeClient());
+        $request = Request::create('/courier/webhook/jtexpress', 'POST', ['bizContent' => $bizContent]);
+        $request->headers->set('digest', 'wrong-digest');
+
+        $this->assertFalse($driver->verifyWebhook($request));
     }
 }

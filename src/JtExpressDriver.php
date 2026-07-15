@@ -17,6 +17,7 @@ use Laraditz\Courier\DTOs\Results\ShipmentResult;
 use Laraditz\Courier\DTOs\Results\TrackingResult;
 use Laraditz\Courier\DTOs\Shared\Address;
 use Laraditz\Courier\JtExpress\Http\JtExpressClient;
+use Laraditz\Courier\JtExpress\Http\JtExpressSigner;
 use Laraditz\Courier\JtExpress\Mappers\CancelMapper;
 use Laraditz\Courier\JtExpress\Mappers\LabelMapper;
 use Laraditz\Courier\JtExpress\Mappers\ShipmentMapper;
@@ -25,10 +26,12 @@ use Laraditz\Courier\JtExpress\Mappers\TrackingMapper;
 class JtExpressDriver implements CourierDriver, HandlesWebhooks
 {
     private JtExpressClient $client;
+    private JtExpressSigner $signer;
 
     public function __construct(private readonly array $config, ?JtExpressClient $client = null)
     {
         $this->client = $client ?? new JtExpressClient($config);
+        $this->signer = new JtExpressSigner($config['private_key'] ?? '');
     }
 
     public function createShipment(ShipmentPayload $payload): ShipmentResult
@@ -138,7 +141,9 @@ class JtExpressDriver implements CourierDriver, HandlesWebhooks
 
     public function verifyWebhook(Request $request): bool
     {
-        throw new \RuntimeException('not implemented');
+        $digest = $this->signer->digest((string) $request->input('bizContent', ''));
+
+        return hash_equals($digest, (string) $request->header('digest', ''));
     }
 
     public function handleWebhook(Request $request): void
