@@ -1,0 +1,16 @@
+{
+    "code": "1",
+    "msg": "success",
+    "data": {
+        "txlogisticId": "OPEN2026289267907",
+        "billCode": "630000491494",
+        "sortingCode": "93-C24-NS610",
+        "thirdSortingCode": "EC2",
+        "boxStandardCode": "SETIA INTERNATIONAL CENTRE",
+        "basePriceFreight": 2052,
+        "basePriceDiscount": 2052,
+        "totalFreight": 2052,
+        "packageChargeWeight": "10.00"
+    },
+    "requestId": "0dabc88afac622f5"
+}

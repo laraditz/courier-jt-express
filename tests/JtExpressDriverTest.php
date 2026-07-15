@@ -1,0 +1,374 @@
+<?php
+
+namespace Laraditz\Courier\JtExpress\Tests;
+
+use Laraditz\Courier\DTOs\Payloads\AvailabilityPayload;
+use Laraditz\Courier\DTOs\Payloads\RatePayload;
+use Laraditz\Courier\DTOs\Payloads\ShipmentPayload;
+use Laraditz\Courier\DTOs\Results\CancelResult;
+use Laraditz\Courier\DTOs\Results\LabelResult;
+use Laraditz\Courier\DTOs\Results\ShipmentResult;
+use Laraditz\Courier\DTOs\Results\TrackingResult;
+use Laraditz\Courier\DTOs\Shared\Address;
+use Laraditz\Courier\DTOs\Shared\Location;
+use Laraditz\Courier\DTOs\Shared\Parcel;
+use Laraditz\Courier\Exceptions\InvalidPayloadException;
+use Laraditz\Courier\Exceptions\ShipmentNotFoundException;
+use Laraditz\Courier\Exceptions\UnsupportedOperationException;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Event;
+use Laraditz\Courier\JtExpress\Events\TrackingUpdated;
+use Laraditz\Courier\JtExpress\Http\JtExpressClient;
+use Laraditz\Courier\JtExpress\Http\JtExpressSigner;
+use Laraditz\Courier\JtExpress\JtExpressDriver;
+
+class JtExpressDriverTest extends TestCase
+{
+    private function makeAddress(): Address
+    {
+        return new Address('Farhan', '+60123456789', null, 'No 1 Jalan Test', null, null, 'Kuala Lumpur', 'WP', '50000', 'MY');
+    }
+
+    private function makeParcel(): Parcel
+    {
+        return new Parcel(1.5, 20.0, 15.0, 10.0, 100.0, 'Goods', 1);
+    }
+
+    private function makeClient(array $dispatchReturn = []): JtExpressClient
+    {
+        $client = $this->createMock(JtExpressClient::class);
+        $client->method('customerCode')->willReturn('TEST-CUSTOMER-CODE');
+        $client->method('dispatch')->willReturn($dispatchReturn);
+
+        return $client;
+    }
+
+    private function makeDriver(array $dispatchReturn = []): JtExpressDriver
+    {
+        return new JtExpressDriver([], $this->makeClient($dispatchReturn));
+    }
+
+    public function test_create_shipment_returns_shipment_result(): void
+    {
+        $driver = $this->makeDriver([
+            'code' => '1',
+            'msg'  => 'success',
+            'data' => [
+                'billCode'    => '630000491494',
+                'sortingCode' => '93-C24-NS610',
+            ],
+        ]);
+
+        $result = $driver->createShipment(new ShipmentPayload(
+            sender: $this->makeAddress(),
+            recipient: $this->makeAddress(),
+            parcel: $this->makeParcel(),
+            serviceCode: 'EZ',
+            reference: 'ORDER-001',
+        ));
+
+        $this->assertInstanceOf(ShipmentResult::class, $result);
+        $this->assertSame('630000491494', $result->waybillNumber);
+        $this->assertSame('ORDER-001', $result->reference);
+    }
+
+    public function test_create_shipment_generates_reference_when_none_given(): void
+    {
+        $driver = $this->makeDriver([
+            'code' => '1',
+            'msg'  => 'success',
+            'data' => ['billCode' => '630000491494'],
+        ]);
+
+        $result = $driver->createShipment(new ShipmentPayload(
+            sender: $this->makeAddress(),
+            recipient: $this->makeAddress(),
+            parcel: $this->makeParcel(),
+            serviceCode: 'EZ',
+        ));
+
+        $this->assertNotNull($result->reference);
+        $this->assertMatchesRegularExpression(
+            '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/',
+            $result->reference
+        );
+    }
+
+    public function test_create_shipment_sends_correct_path_and_business_params(): void
+    {
+        $client = $this->createMock(JtExpressClient::class);
+        $client->method('customerCode')->willReturn('TEST-CUSTOMER-CODE');
+        $client->expects($this->once())
+            ->method('dispatch')
+            ->with(
+                'order/addOrder',
+                $this->callback(function (array $body) {
+                    return $body['txlogisticId'] === 'ORDER-001'
+                        && $body['actionType'] === 'add'
+                        && $body['serviceType'] === '1'
+                        && $body['payType'] === 'PP_PM'
+                        && $body['expressType'] === 'EZ'
+                        && $body['sender']['countryCode'] === 'MYS'
+                        && $body['receiver']['countryCode'] === 'MYS'
+                        && $body['packageInfo']['goodsType'] === 'ITN8';
+                })
+            )
+            ->willReturn(['code' => '1', 'msg' => 'success', 'data' => ['billCode' => 'BC001']]);
+
+        $driver = new JtExpressDriver([], $client);
+        $driver->createShipment(new ShipmentPayload(
+            sender: $this->makeAddress(),
+            recipient: $this->makeAddress(),
+            parcel: $this->makeParcel(),
+            serviceCode: 'EZ',
+            reference: 'ORDER-001',
+        ));
+    }
+
+    public function test_get_shipment_returns_shipment_result(): void
+    {
+        $driver = $this->makeDriver([
+            'code' => '1',
+            'msg'  => 'success',
+            'data' => ['billCode' => '630002864925', 'txlogisticId' => 'ORDER-001'],
+        ]);
+
+        $result = $driver->getShipment('ORDER-001');
+
+        $this->assertInstanceOf(ShipmentResult::class, $result);
+        $this->assertSame('630002864925', $result->waybillNumber);
+        $this->assertSame('ORDER-001', $result->reference);
+    }
+
+    public function test_get_shipment_sends_correct_path_and_reference(): void
+    {
+        $client = $this->createMock(JtExpressClient::class);
+        $client->method('customerCode')->willReturn('TEST-CUSTOMER-CODE');
+        $client->expects($this->once())
+            ->method('dispatch')
+            ->with('order/getOrders', ['txlogisticId' => 'ORDER-001'])
+            ->willReturn(['code' => '1', 'msg' => 'success', 'data' => ['billCode' => 'BC001']]);
+
+        $driver = new JtExpressDriver([], $client);
+        $driver->getShipment('ORDER-001');
+    }
+
+    public function test_track_returns_tracking_result(): void
+    {
+        $driver = $this->makeDriver([
+            'code' => '1',
+            'msg'  => 'success',
+            'data' => [[
+                'billCode' => '630002864925',
+                'details'  => [[
+                    'scanTime'        => '2026-06-19 06:30:00',
+                    'desc'            => 'Parcel picked up',
+                    'scanTypeCode'    => '10',
+                    'scanNetworkName' => 'KL Hub',
+                ]],
+            ]],
+        ]);
+
+        $result = $driver->track('630002864925');
+
+        $this->assertInstanceOf(TrackingResult::class, $result);
+        $this->assertSame('630002864925', $result->waybillNumber);
+        $this->assertSame('picked_up', $result->status);
+    }
+
+    public function test_track_throws_shipment_not_found_when_no_data(): void
+    {
+        $driver = $this->makeDriver([
+            'code' => '1',
+            'msg'  => 'success',
+            'data' => [],
+        ]);
+
+        $this->expectException(ShipmentNotFoundException::class);
+
+        $driver->track('UNKNOWN-BILL');
+    }
+
+    public function test_track_rethrows_courier_exception_as_shipment_not_found(): void
+    {
+        $client = $this->createMock(JtExpressClient::class);
+        $client->method('customerCode')->willReturn('TEST-CUSTOMER-CODE');
+        $client->method('dispatch')->willThrowException(
+            new \Laraditz\Courier\Exceptions\CourierException('J&T Express business error [999001030]: data not found')
+        );
+
+        $driver = new JtExpressDriver([], $client);
+
+        $this->expectException(ShipmentNotFoundException::class);
+
+        $driver->track('UNKNOWN-BILL');
+    }
+
+    public function test_cancel_shipment_returns_cancel_result(): void
+    {
+        $driver = $this->makeDriver([
+            'code' => '1',
+            'msg'  => 'success',
+            'data' => ['billCode' => '630002563505', 'txlogisticId' => 'ORDER-001'],
+        ]);
+
+        $result = $driver->cancelShipment('630002563505', 'ORDER-001');
+
+        $this->assertInstanceOf(CancelResult::class, $result);
+        $this->assertTrue($result->success);
+    }
+
+    public function test_cancel_shipment_throws_invalid_payload_when_reference_missing(): void
+    {
+        $driver = $this->makeDriver();
+
+        $this->expectException(InvalidPayloadException::class);
+
+        $driver->cancelShipment('630002563505');
+    }
+
+    public function test_cancel_shipment_sends_correct_path_and_business_params(): void
+    {
+        $client = $this->createMock(JtExpressClient::class);
+        $client->method('customerCode')->willReturn('TEST-CUSTOMER-CODE');
+        $client->expects($this->once())
+            ->method('dispatch')
+            ->with(
+                'order/cancelOrder',
+                $this->callback(function (array $body) {
+                    return $body['txlogisticId'] === 'ORDER-001'
+                        && $body['billCode'] === '630002563505'
+                        && !empty($body['reason']);
+                })
+            )
+            ->willReturn(['code' => '1', 'msg' => 'success', 'data' => []]);
+
+        $driver = new JtExpressDriver([], $client);
+        $driver->cancelShipment('630002563505', 'ORDER-001');
+    }
+
+    public function test_get_label_returns_label_result(): void
+    {
+        $driver = $this->makeDriver([
+            'code' => '1',
+            'msg'  => 'success',
+            'data' => ['base64EncodeContent' => 'JVBERi1mYWtl', 'urlContent' => ''],
+        ]);
+
+        $result = $driver->getLabel('670300032350', 'ORDER-001');
+
+        $this->assertInstanceOf(LabelResult::class, $result);
+        $this->assertSame('pdf', $result->format);
+        $this->assertSame('JVBERi1mYWtl', $result->content);
+    }
+
+    public function test_get_label_throws_invalid_payload_when_reference_missing(): void
+    {
+        $driver = $this->makeDriver();
+
+        $this->expectException(InvalidPayloadException::class);
+
+        $driver->getLabel('670300032350');
+    }
+
+    public function test_get_label_sends_correct_path_and_business_params(): void
+    {
+        $client = $this->createMock(JtExpressClient::class);
+        $client->method('customerCode')->willReturn('TEST-CUSTOMER-CODE');
+        $client->expects($this->once())
+            ->method('dispatch')
+            ->with(
+                'order/printOrder',
+                $this->callback(function (array $body) {
+                    return $body['txlogisticId'] === 'ORDER-001'
+                        && $body['billCode'] === '670300032350';
+                })
+            )
+            ->willReturn(['code' => '1', 'msg' => 'success', 'data' => ['base64EncodeContent' => 'ZmFrZQ==', 'urlContent' => '']]);
+
+        $driver = new JtExpressDriver([], $client);
+        $driver->getLabel('670300032350', 'ORDER-001');
+    }
+
+    public function test_get_rates_throws_unsupported_operation_exception(): void
+    {
+        $driver = $this->makeDriver();
+
+        $this->expectException(UnsupportedOperationException::class);
+
+        $driver->getRates(new RatePayload(
+            origin: new Location('50000', 'Kuala Lumpur', 'WP', 'MY'),
+            destination: new Location('10000', 'Georgetown', 'Penang', 'MY'),
+            parcel: $this->makeParcel(),
+        ));
+    }
+
+    public function test_get_availability_throws_unsupported_operation_exception(): void
+    {
+        $driver = $this->makeDriver();
+
+        $this->expectException(UnsupportedOperationException::class);
+
+        $driver->getAvailability(new AvailabilityPayload(
+            origin: new Location('50000', 'Kuala Lumpur', 'WP', 'MY'),
+            destination: new Location('10000', 'Georgetown', 'Penang', 'MY'),
+        ));
+    }
+
+    public function test_verify_webhook_returns_true_for_valid_signature(): void
+    {
+        $config    = ['private_key' => 'test-private-key'];
+        $bizContent = '{"billCode":"BC001"}';
+        $digest    = (new JtExpressSigner('test-private-key'))->digest($bizContent);
+
+        $driver  = new JtExpressDriver($config, $this->makeClient());
+        $request = Request::create('/courier/webhook/jtexpress', 'POST', ['bizContent' => $bizContent]);
+        $request->headers->set('digest', $digest);
+
+        $this->assertTrue($driver->verifyWebhook($request));
+    }
+
+    public function test_verify_webhook_returns_false_for_invalid_signature(): void
+    {
+        $config     = ['private_key' => 'test-private-key'];
+        $bizContent = '{"billCode":"BC001"}';
+
+        $driver  = new JtExpressDriver($config, $this->makeClient());
+        $request = Request::create('/courier/webhook/jtexpress', 'POST', ['bizContent' => $bizContent]);
+        $request->headers->set('digest', 'wrong-digest');
+
+        $this->assertFalse($driver->verifyWebhook($request));
+    }
+
+    public function test_handle_webhook_dispatches_tracking_updated_per_detail(): void
+    {
+        Event::fake([TrackingUpdated::class]);
+
+        $bizContent = json_encode([
+            [
+                'billCode'     => 'BC001',
+                'txlogisticId' => 'ORDER-001',
+                'details'      => [
+                    ['scanTypeCode' => '10', 'desc' => 'Picked up'],
+                    ['scanTypeCode' => '94', 'desc' => 'Out for delivery'],
+                ],
+            ],
+        ]);
+
+        $driver  = $this->makeDriver();
+        $request = Request::create('/courier/webhook/jtexpress', 'POST', ['bizContent' => $bizContent]);
+
+        $driver->handleWebhook($request);
+
+        Event::assertDispatched(TrackingUpdated::class, 2);
+        Event::assertDispatched(TrackingUpdated::class, function (TrackingUpdated $event) {
+            return $event->billCode === 'BC001'
+                && $event->txlogisticId === 'ORDER-001'
+                && $event->scanTypeCode === '10'
+                && $event->mappedStatus === 'picked_up';
+        });
+        Event::assertDispatched(TrackingUpdated::class, function (TrackingUpdated $event) {
+            return $event->scanTypeCode === '94' && $event->mappedStatus === 'out_for_delivery';
+        });
+    }
+}

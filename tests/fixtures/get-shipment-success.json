@@ -1,0 +1,21 @@
+{
+    "code": "1",
+    "msg": "success",
+    "data": {
+        "customerCode": "ITTEST0001",
+        "txlogisticId": "YLTEST202404101519",
+        "billCode": "630002864925",
+        "expressType": "EZ",
+        "serviceType": "1",
+        "payType": "PP_PM",
+        "createOrderTime": "2024-06-19 06:13:57",
+        "packageInfo": {
+            "packageQuantity": 10,
+            "goodsType": "ITN2",
+            "length": 10,
+            "width": 10,
+            "packageValue": 880
+        }
+    },
+    "requestId": "00027ea9b253402facfe872d1915ec64"
+}

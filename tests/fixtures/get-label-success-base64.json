@@ -1,0 +1,11 @@
+{
+    "code": "1",
+    "msg": "success",
+    "data": {
+        "txlogisticId": "KEXMY1000000239996",
+        "billCode": "670300032350",
+        "base64EncodeContent": "JVBERi1mYWtl",
+        "urlContent": ""
+    },
+    "requestId": "7a98e6290485419b841b69f974443d54"
+}

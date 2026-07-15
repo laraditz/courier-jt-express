@@ -1,0 +1,30 @@
+{
+    "code": "1",
+    "msg": "success",
+    "data": [
+        {
+            "billCode": "630002864925",
+            "details": [
+                {
+                    "scanTime": "2026-06-19 06:30:00",
+                    "desc": "Parcel picked up by courier",
+                    "scanTypeCode": "10",
+                    "scanNetworkName": "KL Hub"
+                },
+                {
+                    "scanTime": "2026-06-19 12:00:00",
+                    "desc": "Courier is on the way to your address",
+                    "scanTypeCode": "94",
+                    "scanNetworkName": "KL Delivery Station"
+                },
+                {
+                    "scanTime": "2026-06-19 15:45:00",
+                    "desc": "An unrecognized scan type",
+                    "scanTypeCode": "999",
+                    "scanNetworkName": "Unknown Hub"
+                }
+            ]
+        }
+    ],
+    "requestId": "req-track-001"
+}
