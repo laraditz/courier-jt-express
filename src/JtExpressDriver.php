@@ -63,7 +63,11 @@ class JtExpressDriver implements CourierDriver, HandlesWebhooks
 
     public function getShipment(string $reference): ShipmentResult
     {
-        throw new \RuntimeException('not implemented');
+        $inner = $this->client->dispatch('order/getOrders', [
+            'txlogisticId' => $reference,
+        ]);
+
+        return ShipmentMapper::mapFromInquiry($inner['data'], $reference);
     }
 
     public function track(string $trackingNumber): TrackingResult

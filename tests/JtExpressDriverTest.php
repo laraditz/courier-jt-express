@@ -111,4 +111,32 @@ class JtExpressDriverTest extends TestCase
             reference: 'ORDER-001',
         ));
     }
+
+    public function test_get_shipment_returns_shipment_result(): void
+    {
+        $driver = $this->makeDriver([
+            'code' => '1',
+            'msg'  => 'success',
+            'data' => ['billCode' => '630002864925', 'txlogisticId' => 'ORDER-001'],
+        ]);
+
+        $result = $driver->getShipment('ORDER-001');
+
+        $this->assertInstanceOf(ShipmentResult::class, $result);
+        $this->assertSame('630002864925', $result->waybillNumber);
+        $this->assertSame('ORDER-001', $result->reference);
+    }
+
+    public function test_get_shipment_sends_correct_path_and_reference(): void
+    {
+        $client = $this->createMock(JtExpressClient::class);
+        $client->method('customerCode')->willReturn('TEST-CUSTOMER-CODE');
+        $client->expects($this->once())
+            ->method('dispatch')
+            ->with('order/getOrders', ['txlogisticId' => 'ORDER-001'])
+            ->willReturn(['code' => '1', 'msg' => 'success', 'data' => ['billCode' => 'BC001']]);
+
+        $driver = new JtExpressDriver([], $client);
+        $driver->getShipment('ORDER-001');
+    }
 }
