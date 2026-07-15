@@ -18,6 +18,7 @@ use Laraditz\Courier\DTOs\Results\TrackingResult;
 use Laraditz\Courier\DTOs\Shared\Address;
 use Laraditz\Courier\JtExpress\Http\JtExpressClient;
 use Laraditz\Courier\JtExpress\Mappers\ShipmentMapper;
+use Laraditz\Courier\JtExpress\Mappers\TrackingMapper;
 
 class JtExpressDriver implements CourierDriver, HandlesWebhooks
 {
@@ -72,7 +73,18 @@ class JtExpressDriver implements CourierDriver, HandlesWebhooks
 
     public function track(string $trackingNumber): TrackingResult
     {
-        throw new \RuntimeException('not implemented');
+        try {
+            $inner = $this->client->dispatch('logistics/trace', [
+                'billCode' => $trackingNumber,
+            ]);
+        } catch (\Laraditz\Courier\Exceptions\CourierException $e) {
+            throw new \Laraditz\Courier\Exceptions\ShipmentNotFoundException(
+                "Waybill [{$trackingNumber}] not found.",
+                previous: $e
+            );
+        }
+
+        return TrackingMapper::map($inner['data'], $trackingNumber);
     }
 
     public function getRates(RatePayload $payload): RateCollection
