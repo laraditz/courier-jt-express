@@ -91,7 +91,9 @@ class JtExpressDriver implements CourierDriver, HandlesWebhooks
 
     public function getRates(RatePayload $payload): RateCollection
     {
-        throw new \RuntimeException('not implemented');
+        throw new \Laraditz\Courier\Exceptions\UnsupportedOperationException(
+            'J&T Express Malaysia does not support rate quoting.'
+        );
     }
 
     public function cancelShipment(string $waybillNumber, ?string $reference = null): CancelResult
@@ -129,7 +131,9 @@ class JtExpressDriver implements CourierDriver, HandlesWebhooks
 
     public function getAvailability(AvailabilityPayload $payload): ServiceCollection
     {
-        throw new \RuntimeException('not implemented');
+        throw new \Laraditz\Courier\Exceptions\UnsupportedOperationException(
+            'J&T Express Malaysia does not support service availability lookup.'
+        );
     }
 
     public function verifyWebhook(Request $request): bool

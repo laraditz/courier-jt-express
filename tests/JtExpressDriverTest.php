@@ -2,15 +2,19 @@
 
 namespace Laraditz\Courier\JtExpress\Tests;
 
+use Laraditz\Courier\DTOs\Payloads\AvailabilityPayload;
+use Laraditz\Courier\DTOs\Payloads\RatePayload;
 use Laraditz\Courier\DTOs\Payloads\ShipmentPayload;
 use Laraditz\Courier\DTOs\Results\CancelResult;
 use Laraditz\Courier\DTOs\Results\LabelResult;
 use Laraditz\Courier\DTOs\Results\ShipmentResult;
 use Laraditz\Courier\DTOs\Results\TrackingResult;
 use Laraditz\Courier\DTOs\Shared\Address;
+use Laraditz\Courier\DTOs\Shared\Location;
 use Laraditz\Courier\DTOs\Shared\Parcel;
 use Laraditz\Courier\Exceptions\InvalidPayloadException;
 use Laraditz\Courier\Exceptions\ShipmentNotFoundException;
+use Laraditz\Courier\Exceptions\UnsupportedOperationException;
 use Laraditz\Courier\JtExpress\Http\JtExpressClient;
 use Laraditz\Courier\JtExpress\JtExpressDriver;
 
@@ -280,5 +284,30 @@ class JtExpressDriverTest extends TestCase
 
         $driver = new JtExpressDriver([], $client);
         $driver->getLabel('670300032350', 'ORDER-001');
+    }
+
+    public function test_get_rates_throws_unsupported_operation_exception(): void
+    {
+        $driver = $this->makeDriver();
+
+        $this->expectException(UnsupportedOperationException::class);
+
+        $driver->getRates(new RatePayload(
+            origin: new Location('50000', 'Kuala Lumpur', 'WP', 'MY'),
+            destination: new Location('10000', 'Georgetown', 'Penang', 'MY'),
+            parcel: $this->makeParcel(),
+        ));
+    }
+
+    public function test_get_availability_throws_unsupported_operation_exception(): void
+    {
+        $driver = $this->makeDriver();
+
+        $this->expectException(UnsupportedOperationException::class);
+
+        $driver->getAvailability(new AvailabilityPayload(
+            origin: new Location('50000', 'Kuala Lumpur', 'WP', 'MY'),
+            destination: new Location('10000', 'Georgetown', 'Penang', 'MY'),
+        ));
     }
 }
