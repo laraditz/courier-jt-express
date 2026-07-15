@@ -3,6 +3,7 @@
 namespace Laraditz\Courier\JtExpress\Tests\Http;
 
 use Illuminate\Support\Facades\Http;
+use Laraditz\Courier\Exceptions\CourierException;
 use Laraditz\Courier\JtExpress\Http\JtExpressClient;
 use Laraditz\Courier\JtExpress\Tests\TestCase;
 
@@ -62,5 +63,31 @@ class JtExpressClientTest extends TestCase
         $client = new JtExpressClient($this->config());
 
         $this->assertSame('TEST-CUSTOMER-CODE', $client->customerCode());
+    }
+
+    public function test_dispatch_throws_courier_exception_on_http_failure(): void
+    {
+        Http::fake([
+            '*/order/addOrder' => Http::response('Server Error', 500),
+        ]);
+
+        $this->expectException(CourierException::class);
+
+        (new JtExpressClient($this->config()))->dispatch('order/addOrder', []);
+    }
+
+    public function test_dispatch_throws_courier_exception_on_business_error(): void
+    {
+        Http::fake([
+            '*/order/addOrder' => Http::response([
+                'code' => '999001010',
+                'msg'  => 'txlogisticId is required',
+            ], 200),
+        ]);
+
+        $this->expectException(CourierException::class);
+        $this->expectExceptionMessageMatches('/txlogisticId is required/');
+
+        (new JtExpressClient($this->config()))->dispatch('order/addOrder', []);
     }
 }

@@ -3,6 +3,7 @@
 namespace Laraditz\Courier\JtExpress\Http;
 
 use Illuminate\Support\Facades\Http;
+use Laraditz\Courier\Exceptions\CourierException;
 
 class JtExpressClient
 {
@@ -32,7 +33,22 @@ class JtExpressClient
                 'bizContent' => $json,
             ]);
 
-        return $response->json();
+        if ($response->failed()) {
+            throw new CourierException(
+                'J&T Express API error (' . $response->status() . '): ' . $response->body()
+            );
+        }
+
+        $data = $response->json();
+
+        if ((string) ($data['code'] ?? '0') !== '1') {
+            throw new CourierException(
+                'J&T Express business error [' . ($data['code'] ?? 'unknown') . ']: ' .
+                ($data['msg'] ?? $response->body())
+            );
+        }
+
+        return $data;
     }
 
     public function customerCode(): string
