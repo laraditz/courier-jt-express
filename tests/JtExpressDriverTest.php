@@ -3,10 +3,12 @@
 namespace Laraditz\Courier\JtExpress\Tests;
 
 use Laraditz\Courier\DTOs\Payloads\ShipmentPayload;
+use Laraditz\Courier\DTOs\Results\CancelResult;
 use Laraditz\Courier\DTOs\Results\ShipmentResult;
 use Laraditz\Courier\DTOs\Results\TrackingResult;
 use Laraditz\Courier\DTOs\Shared\Address;
 use Laraditz\Courier\DTOs\Shared\Parcel;
+use Laraditz\Courier\Exceptions\InvalidPayloadException;
 use Laraditz\Courier\Exceptions\ShipmentNotFoundException;
 use Laraditz\Courier\JtExpress\Http\JtExpressClient;
 use Laraditz\Courier\JtExpress\JtExpressDriver;
@@ -191,5 +193,48 @@ class JtExpressDriverTest extends TestCase
         $this->expectException(ShipmentNotFoundException::class);
 
         $driver->track('UNKNOWN-BILL');
+    }
+
+    public function test_cancel_shipment_returns_cancel_result(): void
+    {
+        $driver = $this->makeDriver([
+            'code' => '1',
+            'msg'  => 'success',
+            'data' => ['billCode' => '630002563505', 'txlogisticId' => 'ORDER-001'],
+        ]);
+
+        $result = $driver->cancelShipment('630002563505', 'ORDER-001');
+
+        $this->assertInstanceOf(CancelResult::class, $result);
+        $this->assertTrue($result->success);
+    }
+
+    public function test_cancel_shipment_throws_invalid_payload_when_reference_missing(): void
+    {
+        $driver = $this->makeDriver();
+
+        $this->expectException(InvalidPayloadException::class);
+
+        $driver->cancelShipment('630002563505');
+    }
+
+    public function test_cancel_shipment_sends_correct_path_and_business_params(): void
+    {
+        $client = $this->createMock(JtExpressClient::class);
+        $client->method('customerCode')->willReturn('TEST-CUSTOMER-CODE');
+        $client->expects($this->once())
+            ->method('dispatch')
+            ->with(
+                'order/cancelOrder',
+                $this->callback(function (array $body) {
+                    return $body['txlogisticId'] === 'ORDER-001'
+                        && $body['billCode'] === '630002563505'
+                        && !empty($body['reason']);
+                })
+            )
+            ->willReturn(['code' => '1', 'msg' => 'success', 'data' => []]);
+
+        $driver = new JtExpressDriver([], $client);
+        $driver->cancelShipment('630002563505', 'ORDER-001');
     }
 }
