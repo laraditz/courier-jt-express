@@ -16,6 +16,7 @@ use Laraditz\Courier\DTOs\Results\ServiceCollection;
 use Laraditz\Courier\DTOs\Results\ShipmentResult;
 use Laraditz\Courier\DTOs\Results\TrackingResult;
 use Laraditz\Courier\DTOs\Shared\Address;
+use Laraditz\Courier\JtExpress\Events\TrackingUpdated;
 use Laraditz\Courier\JtExpress\Http\JtExpressClient;
 use Laraditz\Courier\JtExpress\Http\JtExpressSigner;
 use Laraditz\Courier\JtExpress\Mappers\CancelMapper;
@@ -148,7 +149,21 @@ class JtExpressDriver implements CourierDriver, HandlesWebhooks
 
     public function handleWebhook(Request $request): void
     {
-        throw new \RuntimeException('not implemented');
+        $orders = json_decode((string) $request->input('bizContent', '[]'), true) ?? [];
+
+        foreach ($orders as $order) {
+            foreach ($order['details'] ?? [] as $detail) {
+                $scanTypeCode = (string) ($detail['scanTypeCode'] ?? '');
+
+                event(new TrackingUpdated(
+                    billCode: $order['billCode'] ?? '',
+                    txlogisticId: $order['txlogisticId'] ?? null,
+                    scanTypeCode: $scanTypeCode,
+                    mappedStatus: TrackingMapper::mapStatus($scanTypeCode),
+                    raw: $detail,
+                ));
+            }
+        }
     }
 
     private function formatAddress(Address $address): array

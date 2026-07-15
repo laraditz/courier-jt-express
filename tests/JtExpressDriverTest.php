@@ -16,6 +16,8 @@ use Laraditz\Courier\Exceptions\InvalidPayloadException;
 use Laraditz\Courier\Exceptions\ShipmentNotFoundException;
 use Laraditz\Courier\Exceptions\UnsupportedOperationException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Event;
+use Laraditz\Courier\JtExpress\Events\TrackingUpdated;
 use Laraditz\Courier\JtExpress\Http\JtExpressClient;
 use Laraditz\Courier\JtExpress\Http\JtExpressSigner;
 use Laraditz\Courier\JtExpress\JtExpressDriver;
@@ -336,5 +338,37 @@ class JtExpressDriverTest extends TestCase
         $request->headers->set('digest', 'wrong-digest');
 
         $this->assertFalse($driver->verifyWebhook($request));
+    }
+
+    public function test_handle_webhook_dispatches_tracking_updated_per_detail(): void
+    {
+        Event::fake([TrackingUpdated::class]);
+
+        $bizContent = json_encode([
+            [
+                'billCode'     => 'BC001',
+                'txlogisticId' => 'ORDER-001',
+                'details'      => [
+                    ['scanTypeCode' => '10', 'desc' => 'Picked up'],
+                    ['scanTypeCode' => '94', 'desc' => 'Out for delivery'],
+                ],
+            ],
+        ]);
+
+        $driver  = $this->makeDriver();
+        $request = Request::create('/courier/webhook/jtexpress', 'POST', ['bizContent' => $bizContent]);
+
+        $driver->handleWebhook($request);
+
+        Event::assertDispatched(TrackingUpdated::class, 2);
+        Event::assertDispatched(TrackingUpdated::class, function (TrackingUpdated $event) {
+            return $event->billCode === 'BC001'
+                && $event->txlogisticId === 'ORDER-001'
+                && $event->scanTypeCode === '10'
+                && $event->mappedStatus === 'picked_up';
+        });
+        Event::assertDispatched(TrackingUpdated::class, function (TrackingUpdated $event) {
+            return $event->scanTypeCode === '94' && $event->mappedStatus === 'out_for_delivery';
+        });
     }
 }

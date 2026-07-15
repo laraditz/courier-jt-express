@@ -27,6 +27,11 @@ class TrackingMapper
         '306' => 'exception',
     ];
 
+    public static function mapStatus(string $scanTypeCode): string
+    {
+        return self::$scanTypeMap[$scanTypeCode] ?? 'unknown';
+    }
+
     public static function map(array $data, string $trackingNumber): TrackingResult
     {
         $entry = $data[0] ?? [];
@@ -42,7 +47,7 @@ class TrackingMapper
                 timestamp: Carbon::parse($detail['scanTime']),
                 location: $detail['scanNetworkName'] ?? '',
                 description: $detail['desc'] ?? '',
-                status: self::$scanTypeMap[$detail['scanTypeCode'] ?? ''] ?? 'unknown',
+                status: self::mapStatus($detail['scanTypeCode'] ?? ''),
             ),
             $entry['details'] ?? []
         );
