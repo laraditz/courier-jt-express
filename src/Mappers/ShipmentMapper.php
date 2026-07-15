@@ -20,4 +20,20 @@ class ShipmentMapper
             ],
         );
     }
+
+    public static function mapFromInquiry(array $data, string $reference): ShipmentResult
+    {
+        return new ShipmentResult(
+            waybillNumber: $data['billCode'],
+            status: 'unknown',
+            estimatedDelivery: null,
+            reference: $data['txlogisticId'] ?? $reference,
+            meta: [
+                'packageInfo'     => $data['packageInfo'] ?? null,
+                'payType'         => $data['payType'] ?? null,
+                'expressType'     => $data['expressType'] ?? null,
+                'createOrderTime' => $data['createOrderTime'] ?? null,
+            ],
+        );
+    }
 }
