@@ -18,6 +18,7 @@ use Laraditz\Courier\DTOs\Results\TrackingResult;
 use Laraditz\Courier\DTOs\Shared\Address;
 use Laraditz\Courier\JtExpress\Http\JtExpressClient;
 use Laraditz\Courier\JtExpress\Mappers\CancelMapper;
+use Laraditz\Courier\JtExpress\Mappers\LabelMapper;
 use Laraditz\Courier\JtExpress\Mappers\ShipmentMapper;
 use Laraditz\Courier\JtExpress\Mappers\TrackingMapper;
 
@@ -112,7 +113,18 @@ class JtExpressDriver implements CourierDriver, HandlesWebhooks
 
     public function getLabel(string $waybillNumber, ?string $reference = null): LabelResult
     {
-        throw new \RuntimeException('not implemented');
+        if ($reference === null) {
+            throw new \Laraditz\Courier\Exceptions\InvalidPayloadException(
+                'J&T Express requires the original order reference to fetch a label.'
+            );
+        }
+
+        $inner = $this->client->dispatch('order/printOrder', [
+            'txlogisticId' => $reference,
+            'billCode'     => $waybillNumber,
+        ]);
+
+        return LabelMapper::map($inner['data'], $waybillNumber);
     }
 
     public function getAvailability(AvailabilityPayload $payload): ServiceCollection

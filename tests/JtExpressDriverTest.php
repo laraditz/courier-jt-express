@@ -4,6 +4,7 @@ namespace Laraditz\Courier\JtExpress\Tests;
 
 use Laraditz\Courier\DTOs\Payloads\ShipmentPayload;
 use Laraditz\Courier\DTOs\Results\CancelResult;
+use Laraditz\Courier\DTOs\Results\LabelResult;
 use Laraditz\Courier\DTOs\Results\ShipmentResult;
 use Laraditz\Courier\DTOs\Results\TrackingResult;
 use Laraditz\Courier\DTOs\Shared\Address;
@@ -236,5 +237,48 @@ class JtExpressDriverTest extends TestCase
 
         $driver = new JtExpressDriver([], $client);
         $driver->cancelShipment('630002563505', 'ORDER-001');
+    }
+
+    public function test_get_label_returns_label_result(): void
+    {
+        $driver = $this->makeDriver([
+            'code' => '1',
+            'msg'  => 'success',
+            'data' => ['base64EncodeContent' => 'JVBERi1mYWtl', 'urlContent' => ''],
+        ]);
+
+        $result = $driver->getLabel('670300032350', 'ORDER-001');
+
+        $this->assertInstanceOf(LabelResult::class, $result);
+        $this->assertSame('pdf', $result->format);
+        $this->assertSame('JVBERi1mYWtl', $result->content);
+    }
+
+    public function test_get_label_throws_invalid_payload_when_reference_missing(): void
+    {
+        $driver = $this->makeDriver();
+
+        $this->expectException(InvalidPayloadException::class);
+
+        $driver->getLabel('670300032350');
+    }
+
+    public function test_get_label_sends_correct_path_and_business_params(): void
+    {
+        $client = $this->createMock(JtExpressClient::class);
+        $client->method('customerCode')->willReturn('TEST-CUSTOMER-CODE');
+        $client->expects($this->once())
+            ->method('dispatch')
+            ->with(
+                'order/printOrder',
+                $this->callback(function (array $body) {
+                    return $body['txlogisticId'] === 'ORDER-001'
+                        && $body['billCode'] === '670300032350';
+                })
+            )
+            ->willReturn(['code' => '1', 'msg' => 'success', 'data' => ['base64EncodeContent' => 'ZmFrZQ==', 'urlContent' => '']]);
+
+        $driver = new JtExpressDriver([], $client);
+        $driver->getLabel('670300032350', 'ORDER-001');
     }
 }
