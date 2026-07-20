@@ -8,10 +8,10 @@
 | # | Group | Branch | Status | File |
 |---|---|---|---|---|
 | 1 | Core Contract Foundation (`laraditz/courier`) | `feature/courier-shipment-reference-contract` | done | [g1](2026-07-15-jt-express-driver-plan-g1.md) |
-| 2 | Lalamove Compatibility (`laraditz/courier-lalamove`) | `feature/lalamove-get-shipment-compat` | pending | [g2](2026-07-15-jt-express-driver-plan-g2.md) |
-| 3 | SfExpress Compatibility (`laraditz/courier-sfexpress`) | `feature/sfexpress-get-shipment-compat` | pending | [g3](2026-07-15-jt-express-driver-plan-g3.md) |
-| 4 | JT Express Scaffolding & Client (`laraditz/courier-jt-express`) | `feature/jt-express-scaffolding` | pending | [g4](2026-07-15-jt-express-driver-plan-g4.md) |
-| 5 | JT Express Driver, Mappers & Webhook (`laraditz/courier-jt-express`) | `feature/jt-express-driver` | pending | [g5](2026-07-15-jt-express-driver-plan-g5.md) |
+| 2 | Lalamove Compatibility (`laraditz/courier-lalamove`) | `feature/lalamove-get-shipment-compat` | done | [g2](2026-07-15-jt-express-driver-plan-g2.md) |
+| 3 | SfExpress Compatibility (`laraditz/courier-sfexpress`) | `feature/sfexpress-get-shipment-compat` | done | [g3](2026-07-15-jt-express-driver-plan-g3.md) |
+| 4 | JT Express Scaffolding & Client (`laraditz/courier-jt-express`) | `feature/jt-express-scaffolding` | done | [g4](2026-07-15-jt-express-driver-plan-g4.md) |
+| 5 | JT Express Driver, Mappers & Webhook (`laraditz/courier-jt-express`) | `feature/jt-express-driver` | done | [g5](2026-07-15-jt-express-driver-plan-g5.md) |
 
 ## Sequencing Notes
 

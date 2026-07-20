@@ -1,7 +1,7 @@
 # Group 5: JT Express Driver, Mappers & Webhook
 
 **Branch:** feature/jt-express-driver
-**Status:** pending
+**Status:** done
 **Parent plan:** 2026-07-15-jt-express-driver-plan.md
 **Repo:** laraditz/courier-jt-express
 **Depends on:** Group 4 (merged)
@@ -100,7 +100,7 @@
 - **Est:** 4 min
 
 ### Task 5.14 — JtExpressDriver::handleWebhook()
-- **What:** Replace the stub — decode `bizContent` as JSON, dispatch one `TrackingUpdated` event per `details[]` entry per order in the payload
+- **What:** Replace the stub — decode `bizContent` as JSON, dispatch one `TrackingUpdated` event per `details[]` entry per order in the payload. Extracts `TrackingMapper::mapStatus(string $scanTypeCode): string` as a public helper so this method and `track()` (Task 5.6) share the same status lookup instead of duplicating it.
 - **Test first:** extend `tests/JtExpressDriverTest.php` with `Event::fake()`, assert dispatched event count and field values
 - **Agent:** iris
 - **Subagent:** no

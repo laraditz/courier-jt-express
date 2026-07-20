@@ -1,7 +1,7 @@
 # Group 3: SfExpress Compatibility
 
 **Branch:** feature/sfexpress-get-shipment-compat
-**Status:** pending
+**Status:** done
 **Parent plan:** 2026-07-15-jt-express-driver-plan.md
 **Repo:** laraditz/courier-sfexpress
 **Depends on:** Group 1 (merged)
