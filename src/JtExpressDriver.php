@@ -16,6 +16,7 @@ use Laraditz\Courier\DTOs\Results\ServiceCollection;
 use Laraditz\Courier\DTOs\Results\ShipmentResult;
 use Laraditz\Courier\DTOs\Results\TrackingResult;
 use Laraditz\Courier\DTOs\Shared\Address;
+use Laraditz\Courier\Enums\DeliveryMode;
 use Laraditz\Courier\JtExpress\Events\TrackingUpdated;
 use Laraditz\Courier\JtExpress\Http\JtExpressClient;
 use Laraditz\Courier\JtExpress\Http\JtExpressSigner;
@@ -138,6 +139,11 @@ class JtExpressDriver implements CourierDriver, HandlesWebhooks
         throw new \Laraditz\Courier\Exceptions\UnsupportedOperationException(
             'J&T Express Malaysia does not support service availability lookup.'
         );
+    }
+
+    public function getDeliveryModes(): array
+    {
+        return [DeliveryMode::Scheduled];
     }
 
     public function verifyWebhook(Request $request): bool
