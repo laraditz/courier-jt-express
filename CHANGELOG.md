@@ -2,6 +2,18 @@
 
 All notable changes to `laraditz/courier-jt-express` will be documented in this file.
 
+## Unreleased
+
+### Added
+
+- Outbound API calls are now recorded in `courier_api_logs`: `JtExpressClient` routes every request through `laraditz/courier`'s `CourierHttpClient`, using the API path as the log `action`. `createShipment()` and `getShipment()` log against the order reference; `track()` logs against the waybill; `cancelShipment()` and `getLabel()` log against both.
+- `JtExpressClient::dispatch()` accepts optional `$reference` and `$waybillNumber` arguments supplying that log context. Both default to `null` and are never sent to J&T, so existing callers are unaffected.
+- `JtExpressClient` accepts an optional `CourierHttpClient` as its third constructor argument, for injecting a test double.
+
+### Changed
+
+- Requires a `laraditz/courier` providing `CourierHttpClient::asForm()` and `::timeout()` (v1.3.0). J&T's API is form-encoded, so the wrapper needs `asForm()` to preserve the wire format.
+
 ## v1.0.0
 
 Initial release.

@@ -208,6 +208,32 @@ J&T `scanTypeCode` values mapped to the [normalized status vocabulary](https://g
 | `300`–`306` | `exception` |
 | other | `unknown` |
 
+## API logging
+
+Every outbound J&T Express API call is recorded in `courier_api_logs` by `laraditz/courier`'s `CourierHttpClient`. Nothing extra is needed to switch it on — publish and run the core package's migrations, and rows appear.
+
+Every J&T call goes through one `dispatch()`, so the API path doubles as the logged `action`:
+
+| Driver method | `action` | `reference` | `waybill_number` |
+|---|---|---|---|
+| `createShipment()` | `order/addOrder` | `txlogisticId` (supplied or generated) | — |
+| `getShipment()` | `order/getOrders` | the reference looked up | — |
+| `track()` | `logistics/trace` | — | waybill (`billCode`) |
+| `cancelShipment()` | `order/cancelOrder` | the original reference | waybill |
+| `getLabel()` | `order/printOrder` | the original reference | waybill |
+
+`order/addOrder` carries no `waybill_number` — J&T assigns `billCode` in the response, after the request has already been logged. The reference is on every row, so that is how you find a shipment's calls:
+
+```php
+CourierApiLog::forDriver('jtexpress')->forReference('ORDER-001')->get();
+```
+
+`getRates()` and `getAvailability()` are unsupported and make no HTTP request, so they produce no rows.
+
+Logging is global to `laraditz/courier` and honours its config: set `COURIER_LOGGING_ENABLED=false` to turn it off, and `courier.logging.redact` controls which keys are masked. The shipped redact list covers J&T's `apiAccount` and `digest` headers.
+
+> **One gap to be aware of:** redaction matches key names and does not descend into JSON held inside a string value. J&T sends its payload as a single `bizContent` form field containing JSON, so the hashed `password` inside it is stored as-is. It is a hash, not the raw password, but treat `courier_api_logs` as sensitive and keep `courier.logging.retention_days` set.
+
 ## Testing
 
 ```bash

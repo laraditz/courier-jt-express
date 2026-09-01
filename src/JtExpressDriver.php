@@ -64,7 +64,7 @@ class JtExpressDriver implements CourierDriver, HandlesWebhooks
                 'height'          => (string) $payload->parcel->height,
             ],
             'remark'       => $payload->remarks ?? '',
-        ]);
+        ], reference: $reference);
 
         return ShipmentMapper::map($inner['data'], $reference);
     }
@@ -73,7 +73,7 @@ class JtExpressDriver implements CourierDriver, HandlesWebhooks
     {
         $inner = $this->client->dispatch('order/getOrders', [
             'txlogisticId' => $reference,
-        ]);
+        ], reference: $reference);
 
         return ShipmentMapper::mapFromInquiry($inner['data'], $reference);
     }
@@ -83,7 +83,7 @@ class JtExpressDriver implements CourierDriver, HandlesWebhooks
         try {
             $inner = $this->client->dispatch('logistics/trace', [
                 'billCode' => $trackingNumber,
-            ]);
+            ], waybillNumber: $trackingNumber);
         } catch (\Laraditz\Courier\Exceptions\CourierException $e) {
             throw new \Laraditz\Courier\Exceptions\ShipmentNotFoundException(
                 "Waybill [{$trackingNumber}] not found.",
@@ -113,7 +113,7 @@ class JtExpressDriver implements CourierDriver, HandlesWebhooks
             'txlogisticId' => $reference,
             'billCode'     => $waybillNumber,
             'reason'       => 'Cancelled via laraditz/courier',
-        ]);
+        ], reference: $reference, waybillNumber: $waybillNumber);
 
         return CancelMapper::map($inner);
     }
@@ -129,7 +129,7 @@ class JtExpressDriver implements CourierDriver, HandlesWebhooks
         $inner = $this->client->dispatch('order/printOrder', [
             'txlogisticId' => $reference,
             'billCode'     => $waybillNumber,
-        ]);
+        ], reference: $reference, waybillNumber: $waybillNumber);
 
         return LabelMapper::map($inner['data'], $waybillNumber);
     }

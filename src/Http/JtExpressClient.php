@@ -2,36 +2,60 @@
 
 namespace Laraditz\Courier\JtExpress\Http;
 
-use Illuminate\Support\Facades\Http;
 use Laraditz\Courier\Exceptions\CourierException;
+use Laraditz\Courier\Http\CourierHttpClient;
 
 class JtExpressClient
 {
     private readonly JtExpressSigner $signer;
 
-    public function __construct(private readonly array $config, ?JtExpressSigner $signer = null)
-    {
+    private CourierHttpClient $http;
+
+    // CourierHttpClient is not container-bound, so constructing one here is correct;
+    // the parameter exists so tests can inject their own.
+    public function __construct(
+        private readonly array $config,
+        ?JtExpressSigner $signer = null,
+        ?CourierHttpClient $http = null,
+    ) {
         $this->signer = $signer ?? new JtExpressSigner($this->config['private_key']);
+        $this->http   = $http ?? new CourierHttpClient();
     }
 
-    public function dispatch(string $path, array $bizContent): array
-    {
+    /**
+     * $path doubles as the logged action — every J&T call goes through here.
+     * $reference/$waybillNumber are the log context only; they are never sent.
+     */
+    public function dispatch(
+        string $path,
+        array $bizContent,
+        ?string $reference = null,
+        ?string $waybillNumber = null,
+    ): array {
         $bizContent['customerCode'] ??= $this->customerCode();
         $bizContent['password'] = $this->signer->hashPassword($this->config['password'] ?? '');
 
+        // The digest is computed over this exact string, and it travels as a form field
+        // value, so form encoding transports it verbatim — no encoding-mismatch risk.
         $json      = json_encode($bizContent, JSON_UNESCAPED_UNICODE);
         $timestamp = (string) round(microtime(true) * 1000);
 
-        $response = Http::asForm()
+        // forLog() is called on every request, immediately before the verb. It mutates
+        // and returns $this, and leaves configured = true, so an inherited context would
+        // log silently against the previous call's action. Never rely on it persisting.
+        $response = $this->http
+            ->forLog('jtexpress', $path, $reference, $waybillNumber)
+            ->asForm()
             ->timeout($this->config['timeout'] ?? 30)
-            ->withHeaders([
-                'apiAccount' => $this->config['api_account'] ?? '',
-                'digest'     => $this->signer->digest($json),
-                'timestamp'  => $timestamp,
-            ])
-            ->post($this->baseUrl() . '/' . ltrim($path, '/'), [
-                'bizContent' => $json,
-            ]);
+            ->post(
+                $this->baseUrl() . '/' . ltrim($path, '/'),
+                ['bizContent' => $json],
+                [
+                    'apiAccount' => $this->config['api_account'] ?? '',
+                    'digest'     => $this->signer->digest($json),
+                    'timestamp'  => $timestamp,
+                ],
+            );
 
         if ($response->failed()) {
             throw new CourierException(
