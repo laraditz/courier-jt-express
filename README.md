@@ -37,7 +37,8 @@ COURIER_DRIVER=jtexpress
 JTEXPRESS_API_ACCOUNT=your-api-account
 JTEXPRESS_PRIVATE_KEY=your-private-key
 JTEXPRESS_CUSTOMER_CODE=your-customer-code
-JTEXPRESS_PASSWORD=your-plaintext-password
+JTEXPRESS_PASSWORD=your-password
+JTEXPRESS_PASSWORD_ENCRYPTED=false
 JTEXPRESS_SANDBOX=true
 ```
 
@@ -61,7 +62,8 @@ return [
 | `api_account` | Numeric account ID from the J&T Open Platform console — sent as the `apiAccount` header |
 | `private_key` | Used to sign every request (see [Signing](#signing) below) |
 | `customer_code` | Customer code provided by your J&T outlet, e.g. `J0086474299` |
-| `password` | The **plaintext** password J&T issues per account. The driver hashes it (uppercase MD5) on every request — do not pre-hash it yourself |
+| `password` | The password for the account. By default treated as **plaintext** and hashed (uppercase MD5) on every request |
+| `password_encrypted` | Set `true` when `password` already holds the encrypted value from J&T's console signature tool (a 32-char uppercase MD5). The driver then sends it verbatim instead of hashing it again |
 | `sandbox` | `true` to use the demo environment, `false` for production |
 
 ## Available Methods
@@ -177,9 +179,15 @@ Every request is signed per the J&T Open Platform's scheme:
 digest = base64_encode(md5($bizContentJson . $privateKey, true))
 ```
 
-sent as the `digest` header alongside `apiAccount` and a millisecond `timestamp`. The `password` business parameter is `strtoupper(md5($plaintextPassword))`, computed fresh on every request from the plaintext password in your config.
+sent as the `digest` header alongside `apiAccount` and a millisecond `timestamp`. The digest scheme is **confirmed correct against the live demo environment** — supplying a bad digest returns a distinct error (`145003030 headers signature verification failed`) rather than a business error.
 
-> **Verify before production use.** This scheme is implemented from J&T's (partially machine-translated) API documentation and has not been confirmed against a live sandbox call. Test against the demo credentials in J&T's docs before sending real traffic.
+The `password` business parameter defaults to `strtoupper(md5($plaintextPassword))`. However, J&T's docs describe the password as a value you obtain **already encrypted** from the console's signature tool (请在签名工具内获取接口的password), and their sample payloads show a 32-char uppercase MD5 such as `9C75439FB1FD01EB01861670DD1B949C`. If J&T gave you a value in that form, set `JTEXPRESS_PASSWORD_ENCRYPTED=true` so the driver sends it verbatim — otherwise it is hashed a second time and every call fails with:
+
+```
+J&T Express business error [999001030]: customerCode or password is wrong
+```
+
+> **Note on the published demo credentials.** The `ITTEST0001` customer code in J&T's public docs is still recognised by the demo environment (an unknown code returns `Customer code is illegal` instead), but the password published alongside it no longer authenticates. Request working demo credentials from your J&T integration contact rather than relying on the values in the docs.
 
 ## Scope
 

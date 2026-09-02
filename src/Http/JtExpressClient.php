@@ -33,7 +33,13 @@ class JtExpressClient
         ?string $waybillNumber = null,
     ): array {
         $bizContent['customerCode'] ??= $this->customerCode();
-        $bizContent['password'] = $this->signer->hashPassword($this->config['password'] ?? '');
+        // J&T issues the password already encrypted from the console signature tool
+        // (a 32-char uppercase MD5). Hashing that again yields error 999001030
+        // "customerCode or password is wrong", so pass it through untouched when
+        // password_encrypted is set. Plaintext passwords are still hashed here.
+        $bizContent['password'] = ($this->config['password_encrypted'] ?? false)
+            ? (string) ($this->config['password'] ?? '')
+            : $this->signer->hashPassword($this->config['password'] ?? '');
 
         // The digest is computed over this exact string, and it travels as a form field
         // value, so form encoding transports it verbatim — no encoding-mismatch risk.

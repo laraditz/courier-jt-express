@@ -58,6 +58,25 @@ class JtExpressClientTest extends TestCase
         });
     }
 
+    public function test_dispatch_sends_pre_encrypted_password_verbatim_when_configured(): void
+    {
+        Http::fake([
+            '*/order/addOrder' => Http::response($this->successResponse(), 200),
+        ]);
+
+        $config = $this->config();
+        $config['password']           = '9C75439FB1FD01EB01861670DD1B949C';
+        $config['password_encrypted'] = true;
+
+        (new JtExpressClient($config))->dispatch('order/addOrder', ['txlogisticId' => 'REF-001']);
+
+        Http::assertSent(function ($request) {
+            $bizContent = json_decode($request['bizContent'], true);
+
+            return $bizContent['password'] === '9C75439FB1FD01EB01861670DD1B949C';
+        });
+    }
+
     public function test_customer_code_returns_config_value(): void
     {
         $client = new JtExpressClient($this->config());
