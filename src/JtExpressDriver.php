@@ -5,6 +5,7 @@ namespace Laraditz\Courier\JtExpress;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Laraditz\Courier\Contracts\CourierDriver;
+use Laraditz\Courier\Contracts\ExtractsWebhookReference;
 use Laraditz\Courier\Contracts\HandlesWebhooks;
 use Laraditz\Courier\DTOs\Payloads\AvailabilityPayload;
 use Laraditz\Courier\DTOs\Payloads\RatePayload;
@@ -25,8 +26,14 @@ use Laraditz\Courier\JtExpress\Mappers\LabelMapper;
 use Laraditz\Courier\JtExpress\Mappers\ShipmentMapper;
 use Laraditz\Courier\JtExpress\Mappers\TrackingMapper;
 
-class JtExpressDriver implements CourierDriver, HandlesWebhooks
+class JtExpressDriver implements CourierDriver, HandlesWebhooks, ExtractsWebhookReference
 {
+    /**
+     * Seconds of clock skew tolerated on the `timestamp` header before a push is
+     * treated as a replay. Set `webhook_timestamp_tolerance` to 0 to disable.
+     */
+    private const DEFAULT_TIMESTAMP_TOLERANCE = 900;
+
     private JtExpressClient $client;
     private JtExpressSigner $signer;
 
@@ -42,28 +49,30 @@ class JtExpressDriver implements CourierDriver, HandlesWebhooks
 
         $inner = $this->client->dispatch('order/addOrder', [
             'txlogisticId' => $reference,
-            'actionType'   => 'add',
-            'serviceType'  => '1',
-            'payType'      => 'PP_PM',
-            'expressType'  => $payload->serviceCode,
-            'sender'       => $this->formatAddress($payload->sender),
-            'receiver'     => $this->formatAddress($payload->recipient),
-            'items'        => [[
-                'itemName'  => $payload->parcel->description,
-                'number'    => (string) $payload->parcel->quantity,
-                'itemValue' => (string) $payload->parcel->declaredValue,
-                'weight'    => (string) $payload->parcel->weight,
-            ]],
-            'packageInfo'  => [
-                'packageQuantity' => (string) $payload->parcel->quantity,
-                'weight'          => (string) $payload->parcel->weight,
-                'packageValue'    => (string) $payload->parcel->declaredValue,
-                'goodsType'       => 'ITN8',
-                'length'          => (string) $payload->parcel->length,
-                'width'           => (string) $payload->parcel->width,
-                'height'          => (string) $payload->parcel->height,
+            'actionType' => 'add',
+            'serviceType' => '1',
+            'payType' => 'PP_PM',
+            'expressType' => $payload->serviceCode,
+            'sender' => $this->formatAddress($payload->sender),
+            'receiver' => $this->formatAddress($payload->recipient),
+            'items' => [
+                [
+                    'itemName' => $payload->parcel->description,
+                    'number' => (string) $payload->parcel->quantity,
+                    'itemValue' => (string) $payload->parcel->declaredValue,
+                    'weight' => (string) $payload->parcel->weight,
+                ]
             ],
-            'remark'       => $payload->remarks ?? '',
+            'packageInfo' => [
+                'packageQuantity' => (string) $payload->parcel->quantity,
+                'weight' => (string) $payload->parcel->weight,
+                'packageValue' => (string) $payload->parcel->declaredValue,
+                'goodsType' => 'ITN8',
+                'length' => (string) $payload->parcel->length,
+                'width' => (string) $payload->parcel->width,
+                'height' => (string) $payload->parcel->height,
+            ],
+            'remark' => $payload->remarks ?? '',
         ], reference: $reference);
 
         return ShipmentMapper::map($inner['data'], $reference);
@@ -111,8 +120,8 @@ class JtExpressDriver implements CourierDriver, HandlesWebhooks
 
         $inner = $this->client->dispatch('order/cancelOrder', [
             'txlogisticId' => $reference,
-            'billCode'     => $waybillNumber,
-            'reason'       => 'Cancelled via laraditz/courier',
+            'billCode' => $waybillNumber,
+            'reason' => 'Cancelled via laraditz/courier',
         ], reference: $reference, waybillNumber: $waybillNumber);
 
         return CancelMapper::map($inner);
@@ -128,7 +137,7 @@ class JtExpressDriver implements CourierDriver, HandlesWebhooks
 
         $inner = $this->client->dispatch('order/printOrder', [
             'txlogisticId' => $reference,
-            'billCode'     => $waybillNumber,
+            'billCode' => $waybillNumber,
         ], reference: $reference, waybillNumber: $waybillNumber);
 
         return LabelMapper::map($inner['data'], $waybillNumber);
@@ -148,16 +157,41 @@ class JtExpressDriver implements CourierDriver, HandlesWebhooks
 
     public function verifyWebhook(Request $request): bool
     {
+        // The doc marks apiAccount mandatory, and checking it stops a callback signed
+        // for another tenant being accepted here. Opt-in: we have not been able to
+        // confirm that the value J&T pushes equals our own api_account (it is redacted
+        // in courier_webhook_logs), and enabling it wrongly would reject every push.
+        // Confirm against a live push first, then set webhook_verify_api_account=true.
+        $expectedAccount = (string) ($this->config['api_account'] ?? '');
+
+        if (($this->config['webhook_verify_api_account'] ?? false)
+            && $expectedAccount !== ''
+            && ! hash_equals($expectedAccount, (string) $request->header('apiAccount', ''))) {
+            return false;
+        }
+
+        if (! $this->timestampIsFresh($request)) {
+            return false;
+        }
+
         $digest = $this->signer->digest((string) $request->input('bizContent', ''));
 
         return hash_equals($digest, (string) $request->header('digest', ''));
     }
 
+    public function extractWebhookReference(Request $request): array
+    {
+        $order = $this->orders($request)[0] ?? [];
+
+        return [
+            'reference'     => $order['txlogisticId'] ?? null,
+            'waybillNumber' => $order['billCode'] ?? null,
+        ];
+    }
+
     public function handleWebhook(Request $request): void
     {
-        $orders = json_decode((string) $request->input('bizContent', '[]'), true) ?? [];
-
-        foreach ($orders as $order) {
+        foreach ($this->orders($request) as $order) {
             foreach ($order['details'] ?? [] as $detail) {
                 $scanTypeCode = (string) ($detail['scanTypeCode'] ?? '');
 
@@ -172,14 +206,56 @@ class JtExpressDriver implements CourierDriver, HandlesWebhooks
         }
     }
 
+    /**
+     * Decodes bizContent into a list of orders.
+     *
+     * J&T Malaysia pushes a single order object, while the published example shows an
+     * array of them. Both shapes are normalised here so callers see one list.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function orders(Request $request): array
+    {
+        $decoded = json_decode((string) $request->input('bizContent', '[]'), true);
+
+        if (! is_array($decoded)) {
+            return [];
+        }
+
+        $orders = array_is_list($decoded) ? $decoded : [$decoded];
+
+        return array_values(array_filter($orders, 'is_array'));
+    }
+
+    /**
+     * The `timestamp` header carries epoch milliseconds. Rejecting stale values
+     * bounds how long a captured payload and digest stay replayable.
+     */
+    private function timestampIsFresh(Request $request): bool
+    {
+        $tolerance = (int) ($this->config['webhook_timestamp_tolerance'] ?? self::DEFAULT_TIMESTAMP_TOLERANCE);
+
+        if ($tolerance <= 0) {
+            return true;
+        }
+
+        $timestamp = (string) $request->header('timestamp', '');
+
+        if ($timestamp === '' || ! ctype_digit($timestamp)) {
+            return false;
+        }
+
+        return abs(microtime(true) - ((int) $timestamp / 1000)) <= $tolerance;
+    }
+
     private function formatAddress(Address $address): array
     {
         return [
-            'name'      => $address->name,
-            'phone'     => $address->phone ?? '',
+            'name' => $address->name,
+            'phone' => $address->phone ?? '',
             'countryCode' => 'MYS',
-            'address'   => $address->line1,
-            'postCode'  => $address->postcode,
+            'address' => $address->line1,
+            'postCode' => $address->postcode,
         ];
     }
 }

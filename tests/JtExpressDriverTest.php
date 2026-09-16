@@ -315,29 +315,160 @@ class JtExpressDriverTest extends TestCase
         ));
     }
 
+    private function webhookConfig(array $overrides = []): array
+    {
+        return array_merge([
+            'private_key' => 'test-private-key',
+            'api_account' => 'test-account',
+        ], $overrides);
+    }
+
+    /**
+     * Builds a push shaped like a genuine J&T callback. Pass null in $headers to
+     * omit a header entirely, mirroring a stripped or absent one.
+     */
+    private function webhookRequest(string $bizContent, array $headers = []): Request
+    {
+        $request = Request::create('/courier/webhook/jtexpress', 'POST', ['bizContent' => $bizContent]);
+
+        $headers = array_merge([
+            'digest'     => (new JtExpressSigner('test-private-key'))->digest($bizContent),
+            'apiAccount' => 'test-account',
+            'timestamp'  => (string) (int) (microtime(true) * 1000),
+        ], $headers);
+
+        foreach ($headers as $name => $value) {
+            if ($value !== null) {
+                $request->headers->set($name, $value);
+            }
+        }
+
+        return $request;
+    }
+
     public function test_verify_webhook_returns_true_for_valid_signature(): void
     {
-        $config    = ['private_key' => 'test-private-key'];
-        $bizContent = '{"billCode":"BC001"}';
-        $digest    = (new JtExpressSigner('test-private-key'))->digest($bizContent);
+        $driver = new JtExpressDriver($this->webhookConfig(), $this->makeClient());
 
-        $driver  = new JtExpressDriver($config, $this->makeClient());
-        $request = Request::create('/courier/webhook/jtexpress', 'POST', ['bizContent' => $bizContent]);
-        $request->headers->set('digest', $digest);
-
-        $this->assertTrue($driver->verifyWebhook($request));
+        $this->assertTrue($driver->verifyWebhook($this->webhookRequest('{"billCode":"BC001"}')));
     }
 
     public function test_verify_webhook_returns_false_for_invalid_signature(): void
     {
-        $config     = ['private_key' => 'test-private-key'];
-        $bizContent = '{"billCode":"BC001"}';
+        $driver = new JtExpressDriver($this->webhookConfig(), $this->makeClient());
 
-        $driver  = new JtExpressDriver($config, $this->makeClient());
-        $request = Request::create('/courier/webhook/jtexpress', 'POST', ['bizContent' => $bizContent]);
-        $request->headers->set('digest', 'wrong-digest');
+        $this->assertFalse($driver->verifyWebhook(
+            $this->webhookRequest('{"billCode":"BC001"}', ['digest' => 'wrong-digest'])
+        ));
+    }
 
-        $this->assertFalse($driver->verifyWebhook($request));
+    public function test_verify_webhook_rejects_missing_timestamp_header(): void
+    {
+        $driver = new JtExpressDriver($this->webhookConfig(), $this->makeClient());
+
+        $this->assertFalse($driver->verifyWebhook(
+            $this->webhookRequest('{"billCode":"BC001"}', ['timestamp' => null])
+        ));
+    }
+
+    public function test_verify_webhook_rejects_stale_timestamp(): void
+    {
+        $driver = new JtExpressDriver($this->webhookConfig(), $this->makeClient());
+        $stale  = (string) (int) ((microtime(true) - 3600) * 1000);
+
+        $this->assertFalse($driver->verifyWebhook(
+            $this->webhookRequest('{"billCode":"BC001"}', ['timestamp' => $stale])
+        ));
+    }
+
+    public function test_verify_webhook_accepts_stale_timestamp_when_tolerance_disabled(): void
+    {
+        $driver = new JtExpressDriver(
+            $this->webhookConfig(['webhook_timestamp_tolerance' => 0]),
+            $this->makeClient()
+        );
+        $stale = (string) (int) ((microtime(true) - 86400) * 1000);
+
+        $this->assertTrue($driver->verifyWebhook(
+            $this->webhookRequest('{"billCode":"BC001"}', ['timestamp' => $stale])
+        ));
+    }
+
+    public function test_verify_webhook_rejects_mismatched_api_account_when_enabled(): void
+    {
+        $driver = new JtExpressDriver(
+            $this->webhookConfig(['webhook_verify_api_account' => true]),
+            $this->makeClient()
+        );
+
+        $this->assertFalse($driver->verifyWebhook(
+            $this->webhookRequest('{"billCode":"BC001"}', ['apiAccount' => 'someone-elses-account'])
+        ));
+    }
+
+    public function test_verify_webhook_accepts_matching_api_account_when_enabled(): void
+    {
+        $driver = new JtExpressDriver(
+            $this->webhookConfig(['webhook_verify_api_account' => true]),
+            $this->makeClient()
+        );
+
+        $this->assertTrue($driver->verifyWebhook($this->webhookRequest('{"billCode":"BC001"}')));
+    }
+
+    public function test_verify_webhook_ignores_api_account_by_default(): void
+    {
+        $driver = new JtExpressDriver($this->webhookConfig(), $this->makeClient());
+
+        $this->assertTrue($driver->verifyWebhook(
+            $this->webhookRequest('{"billCode":"BC001"}', ['apiAccount' => 'someone-elses-account'])
+        ));
+    }
+
+    public function test_verify_webhook_skips_api_account_check_when_not_configured(): void
+    {
+        $driver = new JtExpressDriver(
+            $this->webhookConfig(['api_account' => null, 'webhook_verify_api_account' => true]),
+            $this->makeClient()
+        );
+
+        $this->assertTrue($driver->verifyWebhook(
+            $this->webhookRequest('{"billCode":"BC001"}', ['apiAccount' => 'anything'])
+        ));
+    }
+
+    public function test_extract_webhook_reference_reads_object_shaped_biz_content(): void
+    {
+        $driver = new JtExpressDriver($this->webhookConfig(), $this->makeClient());
+
+        $reference = $driver->extractWebhookReference($this->webhookRequest(
+            '{"billCode":"630002864925","txlogisticId":"ORDER-9","details":[]}'
+        ));
+
+        $this->assertSame('ORDER-9', $reference['reference']);
+        $this->assertSame('630002864925', $reference['waybillNumber']);
+    }
+
+    public function test_extract_webhook_reference_handles_missing_txlogistic_id(): void
+    {
+        $driver = new JtExpressDriver($this->webhookConfig(), $this->makeClient());
+
+        $reference = $driver->extractWebhookReference($this->webhookRequest(
+            '{"billCode":"630002864925","details":[]}'
+        ));
+
+        $this->assertNull($reference['reference']);
+        $this->assertSame('630002864925', $reference['waybillNumber']);
+    }
+
+    public function test_extract_webhook_reference_returns_nulls_for_unparseable_payload(): void
+    {
+        $driver = new JtExpressDriver($this->webhookConfig(), $this->makeClient());
+
+        $reference = $driver->extractWebhookReference($this->webhookRequest('not-json'));
+
+        $this->assertNull($reference['reference']);
+        $this->assertNull($reference['waybillNumber']);
     }
 
     public function test_handle_webhook_dispatches_tracking_updated_per_detail(): void
@@ -369,6 +500,38 @@ class JtExpressDriverTest extends TestCase
         });
         Event::assertDispatched(TrackingUpdated::class, function (TrackingUpdated $event) {
             return $event->scanTypeCode === '94' && $event->mappedStatus === 'out_for_delivery';
+        });
+    }
+
+    public function test_handle_webhook_accepts_object_shaped_biz_content(): void
+    {
+        // J&T Malaysia sends bizContent as a single order object, not an array of orders.
+        // Captured verbatim from a live push (courier_webhook_logs id=26).
+        Event::fake([TrackingUpdated::class]);
+
+        $bizContent = json_encode([
+            'billCode' => '630002864925',
+            'details'  => [
+                [
+                    'billCode'     => '630002864925',
+                    'desc'         => "['Selangor Network'] Tommy has collected the item.",
+                    'scanTime'     => '2024-06-19 12:33:22',
+                    'scanType'     => 'Express pickup',
+                    'scanTypeCode' => '10',
+                ],
+            ],
+        ]);
+
+        $driver  = $this->makeDriver();
+        $request = Request::create('/courier/webhook/jtexpress', 'POST', ['bizContent' => $bizContent]);
+
+        $driver->handleWebhook($request);
+
+        Event::assertDispatched(TrackingUpdated::class, 1);
+        Event::assertDispatched(TrackingUpdated::class, function (TrackingUpdated $event) {
+            return $event->billCode === '630002864925'
+                && $event->scanTypeCode === '10'
+                && $event->mappedStatus === 'picked_up';
         });
     }
 }
