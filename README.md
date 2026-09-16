@@ -139,13 +139,86 @@ $order = Courier::driver('jtexpress')->getShipment('ORDER-001');
 
 ## Webhooks
 
-The driver implements `HandlesWebhooks`. `verifyWebhook()` recomputes the request digest from the incoming `bizContent` and compares it (via `hash_equals()`) against the `digest` header — the same signature scheme used for outbound requests, not a static secret token.
+The driver implements `HandlesWebhooks` and `ExtractsWebhookReference`. `verifyWebhook()` recomputes the request digest from the incoming `bizContent` and compares it (via `hash_equals()`) against the `digest` header — the same signature scheme used for outbound requests, not a static secret token.
 
 Give J&T your app's webhook URL:
 
 ```
 POST {your-app}/courier/webhook/jtexpress
 ```
+
+### Payload shape
+
+J&T Malaysia pushes `bizContent` as a **single order object**, while the published example
+in their docs shows an **array** of them:
+
+```json
+{ "billCode": "630002864925", "details": [ { "scanTypeCode": "10", ... } ] }
+```
+
+The driver normalises both shapes, so either is handled.
+
+### Webhook verification
+
+Beyond the digest, two optional checks are available:
+
+| Config key | Default | Effect |
+|---|---|---|
+| `webhook_timestamp_tolerance` | `900` | Rejects a push whose `timestamp` header (epoch ms) is more than this many seconds from now, bounding replay. Set to `0` to disable. |
+| `webhook_verify_api_account` | `false` | Rejects a push whose `apiAccount` header does not match `api_account`. |
+
+`webhook_verify_api_account` ships **off**. Confirm the value J&T actually sends matches your
+configured `api_account` before enabling it — if it does not, every push will be rejected.
+The header is redacted in `courier_webhook_logs` by default, so to check it, temporarily
+remove `apiaccount` from `courier.logging.redact` and inspect the next push.
+
+Despite the doc annotating `timestamp` as `(UTC+8)`, observed values are plain epoch
+milliseconds with sub-second accuracy, so no timezone offset is applied.
+
+### Webhook responses
+
+J&T's pusher parses the response body and treats anything without `code == "1"` as a failed
+push — so an empty body means every callback you handle correctly is recorded on their side
+as a failure, and retried. The driver answers with the body their reference requires.
+
+A handled push returns **HTTP 200**:
+
+```json
+{"code":"1","msg":"success","data":"SUCCESS","requestID":"4182"}
+```
+
+A rejected push returns **HTTP 401**, with the code describing what actually failed:
+
+```json
+{"code":"145003052","msg":"digest is empty!","data":"FAIL","requestID":"4183"}
+```
+
+| Failure | `code` | `msg` |
+|---|---|---|
+| `apiAccount` header absent | `145003051` | apiAccount is empty! |
+| `apiAccount` does not match | `145003030` | headers signature verification failed |
+| `timestamp` header absent | `145003053` | timestamp is empty! |
+| `timestamp` malformed or stale | `145003050` | Illegal parameters |
+| `digest` header absent | `145003052` | digest is empty! |
+| `digest` does not match | `145003030` | headers signature verification failed |
+
+Notes:
+
+- **`requestID` is the `courier_webhook_logs` row id.** J&T marks the field mandatory but
+  never sends one to echo back, so it carries an identifier you can resolve directly:
+  `CourierWebhookLog::find(4182)`. Quote it to J&T support and it points at the exact push.
+- If the log write failed there is no row, and `requestID` carries a UUID instead. The field
+  stays valid, and the shape itself tells you there is nothing to look up.
+- **J&T's own documentation spells the key both ways** — `requestId` in the field table,
+  `requestID` in the example. The driver sends `requestID`, matching the example.
+- Two documented codes are never sent. `145003010` (API account does not exist) and
+  `145003012` (no interface permissions) describe state inside J&T's console, which no
+  inbound request reveals — sending either would be a guess presented as a finding.
+- A rejection is a **401**, not a 200 carrying an error code. Non-2xx keeps J&T retrying,
+  which matters when the cause is transient: a push rejected over a few seconds of clock
+  skew is a real tracking event that would otherwise be lost for good.
+- Rate-limited pushes get Laravel's standard **429**. That comes from middleware running
+  before the controller, so the driver cannot shape it.
 
 ### Webhook events
 
@@ -201,20 +274,37 @@ This driver covers Malaysia domestic shipments only, matching what the shared `A
 
 ## Status Mapping
 
-J&T `scanTypeCode` values mapped to the [normalized status vocabulary](https://github.com/laraditz/courier#normalized-status-vocabulary). This map is best-effort — J&T's own code/name reference table lost row alignment during translation, so only a handful of codes are confidently mapped; everything else falls back to `unknown` (the raw scan description is always preserved in `TrackingEvent::$description` regardless):
+J&T `scanTypeCode` values mapped to the [normalized status vocabulary](https://github.com/laraditz/courier#normalized-status-vocabulary). Every code listed in J&T's callback reference is mapped; anything undocumented falls back to `unknown` (the raw scan description is always preserved in `TrackingEvent::$description` regardless):
 
-| scanTypeCode | Status |
-|---|---|
-| `10` | `picked_up` |
-| `20` | `dispatched` |
-| `30` | `arrived` |
-| `94` | `out_for_delivery` |
-| `100` | `delivered` |
-| `110` | `problem` |
-| `172` | `returned` |
-| `173` | `return_delivered` |
-| `300`–`306` | `exception` |
-| other | `unknown` |
+| scanTypeCode | Status | J&T name |
+|---|---|---|
+| `10` | `picked_up` | 快件揽收 |
+| `20` | `dispatched` | 发件扫描 |
+| `30` | `arrived` | 到件扫描 |
+| `94` | `out_for_delivery` | 派件扫描 |
+| `100` | `delivered` | 快件签收 |
+| `110` | `problem` | 问题件扫描 |
+| `172` | `returned` | 退件扫描 |
+| `173` | `return_delivered` | 退件签收 |
+| `200` | `in_transit` | 寄件入库 |
+| `400` | `in_transit` | 清关提货 |
+| `401` | `customs_clearance` | 清关中 |
+| `402` | `customs_cleared` | 清关放行 |
+| `403` | `in_transit` | 清关交付 |
+| `404` | `in_transit` | 大包入库 |
+| `405` | `in_transit` | 中心入库 |
+| `700` | `at_parcel_shop` | 驿站入库 |
+| `701` | `pickup_reminder_sent` | 取件通知 |
+| `702` | `collected_at_parcel_shop` | 驿站出库 |
+| `703` | `returning` | 异常出库 |
+| `704` | `returning` | 取件交接 |
+| `300`–`306` | `exception` | terminal exception states |
+| other | `unknown` | — |
+
+> **Caveat on `700`–`704`.** J&T's own reference table lost row alignment between its
+> `scanTypeName` and `scanType` columns for the parcel-shop series (e.g. `702` is named
+> 驿站出库 / "parcel shop outbound" but typed `signed_pop`). These readings follow
+> `scanTypeName`. Confirm `702` and `704` with J&T before driving business logic off them.
 
 ## API logging
 
