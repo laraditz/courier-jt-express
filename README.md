@@ -175,6 +175,51 @@ remove `apiaccount` from `courier.logging.redact` and inspect the next push.
 Despite the doc annotating `timestamp` as `(UTC+8)`, observed values are plain epoch
 milliseconds with sub-second accuracy, so no timezone offset is applied.
 
+### Webhook responses
+
+J&T's pusher parses the response body and treats anything without `code == "1"` as a failed
+push — so an empty body means every callback you handle correctly is recorded on their side
+as a failure, and retried. The driver answers with the body their reference requires.
+
+A handled push returns **HTTP 200**:
+
+```json
+{"code":"1","msg":"success","data":"SUCCESS","requestID":"4182"}
+```
+
+A rejected push returns **HTTP 401**, with the code describing what actually failed:
+
+```json
+{"code":"145003052","msg":"digest is empty!","data":"FAIL","requestID":"4183"}
+```
+
+| Failure | `code` | `msg` |
+|---|---|---|
+| `apiAccount` header absent | `145003051` | apiAccount is empty! |
+| `apiAccount` does not match | `145003030` | headers signature verification failed |
+| `timestamp` header absent | `145003053` | timestamp is empty! |
+| `timestamp` malformed or stale | `145003050` | Illegal parameters |
+| `digest` header absent | `145003052` | digest is empty! |
+| `digest` does not match | `145003030` | headers signature verification failed |
+
+Notes:
+
+- **`requestID` is the `courier_webhook_logs` row id.** J&T marks the field mandatory but
+  never sends one to echo back, so it carries an identifier you can resolve directly:
+  `CourierWebhookLog::find(4182)`. Quote it to J&T support and it points at the exact push.
+- If the log write failed there is no row, and `requestID` carries a UUID instead. The field
+  stays valid, and the shape itself tells you there is nothing to look up.
+- **J&T's own documentation spells the key both ways** — `requestId` in the field table,
+  `requestID` in the example. The driver sends `requestID`, matching the example.
+- Two documented codes are never sent. `145003010` (API account does not exist) and
+  `145003012` (no interface permissions) describe state inside J&T's console, which no
+  inbound request reveals — sending either would be a guess presented as a finding.
+- A rejection is a **401**, not a 200 carrying an error code. Non-2xx keeps J&T retrying,
+  which matters when the cause is transient: a push rejected over a few seconds of clock
+  skew is a real tracking event that would otherwise be lost for good.
+- Rate-limited pushes get Laravel's standard **429**. That comes from middleware running
+  before the controller, so the driver cannot shape it.
+
 ### Webhook events
 
 | Event class | Fired when |
