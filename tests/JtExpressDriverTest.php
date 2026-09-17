@@ -9,6 +9,7 @@ use Laraditz\Courier\DTOs\Payloads\ShipmentPayload;
 use Laraditz\Courier\Enums\FulfillmentMode;
 use Laraditz\Courier\DTOs\Results\CancelResult;
 use Laraditz\Courier\DTOs\Results\LabelResult;
+use Laraditz\Courier\DTOs\Results\ServiceCollection;
 use Laraditz\Courier\DTOs\Results\ShipmentResult;
 use Laraditz\Courier\DTOs\Results\TrackingResult;
 use Laraditz\Courier\DTOs\Shared\Address;
@@ -305,15 +306,38 @@ class JtExpressDriverTest extends TestCase
         ));
     }
 
-    public function test_get_availability_throws_unsupported_operation_exception(): void
+    /**
+     * J&T publishes no availability endpoint, but "no service options" is an answer,
+     * not an error. Throwing forced every caller to special-case this one driver
+     * before it could ask a question the interface says it may ask.
+     */
+    public function test_get_availability_returns_an_empty_collection(): void
+    {
+        $driver = $this->makeDriver();
+
+        $collection = $driver->getAvailability(new AvailabilityPayload(
+            origin: new Location('50000', 'Kuala Lumpur', 'WP', 'MY'),
+            destination: new Location('10000', 'Georgetown', 'Penang', 'MY'),
+        ));
+
+        $this->assertInstanceOf(ServiceCollection::class, $collection);
+        $this->assertSame([], $collection->items);
+    }
+
+    /**
+     * getRates keeps throwing. An empty rate list would read as "this shipment costs
+     * nothing to send", which is a different and much more dangerous claim.
+     */
+    public function test_get_rates_still_throws(): void
     {
         $driver = $this->makeDriver();
 
         $this->expectException(UnsupportedOperationException::class);
 
-        $driver->getAvailability(new AvailabilityPayload(
+        $driver->getRates(new RatePayload(
             origin: new Location('50000', 'Kuala Lumpur', 'WP', 'MY'),
             destination: new Location('10000', 'Georgetown', 'Penang', 'MY'),
+            parcel: $this->makeParcel(),
         ));
     }
 

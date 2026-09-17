@@ -157,11 +157,21 @@ class JtExpressDriver implements CourierDriver, HandlesWebhooks, ExtractsWebhook
         return LabelMapper::map($inner['data'], $waybillNumber);
     }
 
+    /**
+     * J&T Express Malaysia publishes no availability endpoint.
+     *
+     * Returns an empty collection rather than throwing: "this carrier offers no
+     * selectable service options" is a legitimate answer to the question, and
+     * throwing made every caller special-case this driver before it could ask
+     * something the interface says it may ask.
+     *
+     * getRates() still throws, deliberately. An empty rate list would read as "this
+     * shipment is free to send", which is a different and far more dangerous claim
+     * than "there is nothing to choose from".
+     */
     public function getAvailability(AvailabilityPayload $payload): ServiceCollection
     {
-        throw new \Laraditz\Courier\Exceptions\UnsupportedOperationException(
-            'J&T Express Malaysia does not support service availability lookup.'
-        );
+        return new ServiceCollection([]);
     }
 
     public function getDeliveryModes(): array
