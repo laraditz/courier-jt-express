@@ -409,13 +409,34 @@ class JtExpressDriver implements CourierDriver, HandlesWebhooks, ExtractsWebhook
         return (string) ($this->config['service_type_map'][$fulfillment->value] ?? $default);
     }
 
+    /**
+     * J&T's address shape, which is flatter than the shared Address DTO.
+     *
+     * Every street line is folded into `address`. J&T's only other street field is
+     * addressBak, which it accepts and then discards — confirmed against the sandbox,
+     * where order/getOrders never echoes it back — so anything not in `address` is
+     * lost, and a missing unit or floor number is a failed delivery.
+     *
+     * prov/city are sent for completeness but are not load-bearing: J&T resolves the
+     * administrative hierarchy from the postcode and overrides whatever it is given.
+     *
+     * @return array<string, string>
+     */
     private function formatAddress(Address $address): array
     {
+        $street = array_filter([
+            $address->line1,
+            $address->line2,
+            $address->line3,
+        ], static fn (?string $line): bool => $line !== null && trim($line) !== '');
+
         return [
             'name' => $address->name,
             'phone' => $address->phone ?? '',
             'countryCode' => 'MYS',
-            'address' => $address->line1,
+            'address' => implode(', ', $street),
+            'city' => $address->city ?? '',
+            'prov' => $address->state ?? '',
             'postCode' => $address->postcode,
         ];
     }

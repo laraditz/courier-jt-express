@@ -696,4 +696,81 @@ class JtExpressDriverTest extends TestCase
             $this->payloadWithWindow(FulfillmentMode::Pickup, Carbon::parse('2026-09-18 09:00:00'), null),
         );
     }
+
+    private function fullAddress(): Address
+    {
+        return new Address(
+            'Farhan',
+            '+60123456789',
+            null,
+            'No 1 Jalan Test',
+            'Unit 5-1, Menara Example',
+            'Taman Sejahtera',
+            'Kuala Lumpur',
+            'WP',
+            '50000',
+            'MY',
+        );
+    }
+
+    /**
+     * J&T discards addressBak - the sandbox accepts it and order/getOrders never
+     * echoes it back - so every street line has to travel inside `address` or it is
+     * simply lost. A unit or floor number going missing is a failed delivery.
+     */
+    public function test_address_carries_every_street_line(): void
+    {
+        $this->assertAddOrderBody(
+            function (array $body) {
+                $sent = $body['sender']['address'];
+
+                return str_contains($sent, 'No 1 Jalan Test')
+                    && str_contains($sent, 'Unit 5-1, Menara Example')
+                    && str_contains($sent, 'Taman Sejahtera');
+            },
+            new ShipmentPayload(
+                sender: $this->fullAddress(),
+                recipient: $this->fullAddress(),
+                parcel: $this->makeParcel(),
+                serviceCode: 'EZ',
+                reference: 'ORDER-001',
+                fulfillment: FulfillmentMode::Pickup,
+            ),
+        );
+    }
+
+    public function test_address_omits_empty_street_lines_without_stray_separators(): void
+    {
+        $this->assertAddOrderBody(
+            fn (array $body) => $body['sender']['address'] === 'No 1 Jalan Test',
+            new ShipmentPayload(
+                sender: $this->makeAddress(),
+                recipient: $this->makeAddress(),
+                parcel: $this->makeParcel(),
+                serviceCode: 'EZ',
+                reference: 'ORDER-001',
+                fulfillment: FulfillmentMode::Pickup,
+            ),
+        );
+    }
+
+    /**
+     * J&T resolves prov/city/area from the postcode and overrides whatever is sent,
+     * so these are supplied for completeness, never relied upon.
+     */
+    public function test_address_still_sends_city_and_state(): void
+    {
+        $this->assertAddOrderBody(
+            fn (array $body) => $body['sender']['city'] === 'Kuala Lumpur'
+                && $body['sender']['prov'] === 'WP',
+            new ShipmentPayload(
+                sender: $this->fullAddress(),
+                recipient: $this->fullAddress(),
+                parcel: $this->makeParcel(),
+                serviceCode: 'EZ',
+                reference: 'ORDER-001',
+                fulfillment: FulfillmentMode::Pickup,
+            ),
+        );
+    }
 }
