@@ -19,6 +19,7 @@ use Laraditz\Courier\DTOs\Results\ShipmentResult;
 use Laraditz\Courier\DTOs\Results\TrackingResult;
 use Laraditz\Courier\DTOs\Shared\Address;
 use Laraditz\Courier\Enums\DeliveryMode;
+use Laraditz\Courier\Enums\FulfillmentMode;
 use Laraditz\Courier\JtExpress\Events\TrackingUpdated;
 use Laraditz\Courier\JtExpress\Http\JtExpressClient;
 use Laraditz\Courier\JtExpress\Http\JtExpressSigner;
@@ -63,7 +64,7 @@ class JtExpressDriver implements CourierDriver, HandlesWebhooks, ExtractsWebhook
         $inner = $this->client->dispatch('order/addOrder', [
             'txlogisticId' => $reference,
             'actionType' => 'add',
-            'serviceType' => '1',
+            'serviceType' => $this->serviceTypeFor($payload->fulfillment),
             'payType' => 'PP_PM',
             'expressType' => $payload->serviceCode,
             'sender' => $this->formatAddress($payload->sender),
@@ -86,7 +87,7 @@ class JtExpressDriver implements CourierDriver, HandlesWebhooks, ExtractsWebhook
                 'height' => (string) $payload->parcel->height,
             ],
             'remark' => $payload->remarks ?? '',
-        ], reference: $reference);
+        ] + $this->collectionWindow($payload), reference: $reference);
 
         return ShipmentMapper::map($inner['data'], $reference);
     }
@@ -156,11 +157,21 @@ class JtExpressDriver implements CourierDriver, HandlesWebhooks, ExtractsWebhook
         return LabelMapper::map($inner['data'], $waybillNumber);
     }
 
+    /**
+     * J&T Express Malaysia publishes no availability endpoint.
+     *
+     * Returns an empty collection rather than throwing: "this carrier offers no
+     * selectable service options" is a legitimate answer to the question, and
+     * throwing made every caller special-case this driver before it could ask
+     * something the interface says it may ask.
+     *
+     * getRates() still throws, deliberately. An empty rate list would read as "this
+     * shipment is free to send", which is a different and far more dangerous claim
+     * than "there is nothing to choose from".
+     */
     public function getAvailability(AvailabilityPayload $payload): ServiceCollection
     {
-        throw new \Laraditz\Courier\Exceptions\UnsupportedOperationException(
-            'J&T Express Malaysia does not support service availability lookup.'
-        );
+        return new ServiceCollection([]);
     }
 
     public function getDeliveryModes(): array
@@ -362,13 +373,80 @@ class JtExpressDriver implements CourierDriver, HandlesWebhooks, ExtractsWebhook
             : WebhookRejection::TimestampInvalid;
     }
 
+    /**
+     * The requested collection window, as J&T's addOrder expects it.
+     *
+     * Only meaningful for a pickup: there is nothing for J&T to schedule when the
+     * sender is bringing the parcel in themselves, and sending a window for a
+     * drop-off would describe a rider visit that is not going to happen.
+     *
+     * sendEndTime is optional in J&T's spec, so an open-ended window is sent as a
+     * start alone rather than being rejected or silently completed.
+     *
+     * @return array<string, string>
+     */
+    private function collectionWindow(ShipmentPayload $payload): array
+    {
+        if ($payload->fulfillment !== FulfillmentMode::Pickup || $payload->scheduledAt === null) {
+            return [];
+        }
+
+        $window = ['sendStartTime' => $payload->scheduledAt->format('Y-m-d H:i:s')];
+
+        if ($payload->scheduledUntil !== null) {
+            $window['sendEndTime'] = $payload->scheduledUntil->format('Y-m-d H:i:s');
+        }
+
+        return $window;
+    }
+
+    /**
+     * Resolve the J&T serviceType for a fulfillment mode.
+     *
+     * A null mode falls back to the configured default rather than throwing: callers
+     * written before ShipmentPayload carried a mode must keep booking successfully.
+     * Consumers that care about the distinction are expected to set it explicitly —
+     * J&T cannot be told after the fact which way a shipment was meant to be handed over.
+     */
+    private function serviceTypeFor(?FulfillmentMode $fulfillment): string
+    {
+        $default = (string) ($this->config['service_type_default'] ?? '1');
+
+        if ($fulfillment === null) {
+            return $default;
+        }
+
+        return (string) ($this->config['service_type_map'][$fulfillment->value] ?? $default);
+    }
+
+    /**
+     * J&T's address shape, which is flatter than the shared Address DTO.
+     *
+     * Every street line is folded into `address`. J&T's only other street field is
+     * addressBak, which it accepts and then discards — confirmed against the sandbox,
+     * where order/getOrders never echoes it back — so anything not in `address` is
+     * lost, and a missing unit or floor number is a failed delivery.
+     *
+     * prov/city are sent for completeness but are not load-bearing: J&T resolves the
+     * administrative hierarchy from the postcode and overrides whatever it is given.
+     *
+     * @return array<string, string>
+     */
     private function formatAddress(Address $address): array
     {
+        $street = array_filter([
+            $address->line1,
+            $address->line2,
+            $address->line3,
+        ], static fn (?string $line): bool => $line !== null && trim($line) !== '');
+
         return [
             'name' => $address->name,
             'phone' => $address->phone ?? '',
             'countryCode' => 'MYS',
-            'address' => $address->line1,
+            'address' => implode(', ', $street),
+            'city' => $address->city ?? '',
+            'prov' => $address->state ?? '',
             'postCode' => $address->postcode,
         ];
     }
