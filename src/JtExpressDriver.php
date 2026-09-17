@@ -19,6 +19,7 @@ use Laraditz\Courier\DTOs\Results\ShipmentResult;
 use Laraditz\Courier\DTOs\Results\TrackingResult;
 use Laraditz\Courier\DTOs\Shared\Address;
 use Laraditz\Courier\Enums\DeliveryMode;
+use Laraditz\Courier\Enums\FulfillmentMode;
 use Laraditz\Courier\JtExpress\Events\TrackingUpdated;
 use Laraditz\Courier\JtExpress\Http\JtExpressClient;
 use Laraditz\Courier\JtExpress\Http\JtExpressSigner;
@@ -63,7 +64,7 @@ class JtExpressDriver implements CourierDriver, HandlesWebhooks, ExtractsWebhook
         $inner = $this->client->dispatch('order/addOrder', [
             'txlogisticId' => $reference,
             'actionType' => 'add',
-            'serviceType' => '1',
+            'serviceType' => $this->serviceTypeFor($payload->fulfillment),
             'payType' => 'PP_PM',
             'expressType' => $payload->serviceCode,
             'sender' => $this->formatAddress($payload->sender),
@@ -360,6 +361,25 @@ class JtExpressDriver implements CourierDriver, HandlesWebhooks, ExtractsWebhook
         return abs(microtime(true) - ((int) $timestamp / 1000)) <= $tolerance
             ? null
             : WebhookRejection::TimestampInvalid;
+    }
+
+    /**
+     * Resolve the J&T serviceType for a fulfillment mode.
+     *
+     * A null mode falls back to the configured default rather than throwing: callers
+     * written before ShipmentPayload carried a mode must keep booking successfully.
+     * Consumers that care about the distinction are expected to set it explicitly —
+     * J&T cannot be told after the fact which way a shipment was meant to be handed over.
+     */
+    private function serviceTypeFor(?FulfillmentMode $fulfillment): string
+    {
+        $default = (string) ($this->config['service_type_default'] ?? '1');
+
+        if ($fulfillment === null) {
+            return $default;
+        }
+
+        return (string) ($this->config['service_type_map'][$fulfillment->value] ?? $default);
     }
 
     private function formatAddress(Address $address): array

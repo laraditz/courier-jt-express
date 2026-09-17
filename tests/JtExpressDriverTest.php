@@ -5,6 +5,7 @@ namespace Laraditz\Courier\JtExpress\Tests;
 use Laraditz\Courier\DTOs\Payloads\AvailabilityPayload;
 use Laraditz\Courier\DTOs\Payloads\RatePayload;
 use Laraditz\Courier\DTOs\Payloads\ShipmentPayload;
+use Laraditz\Courier\Enums\FulfillmentMode;
 use Laraditz\Courier\DTOs\Results\CancelResult;
 use Laraditz\Courier\DTOs\Results\LabelResult;
 use Laraditz\Courier\DTOs\Results\ShipmentResult;
@@ -533,5 +534,85 @@ class JtExpressDriverTest extends TestCase
                 && $event->scanTypeCode === '10'
                 && $event->mappedStatus === 'picked_up';
         });
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function serviceTypeConfig(): array
+    {
+        return [
+            'service_type_map' => ['pickup' => '1', 'dropoff' => '6'],
+            'service_type_default' => '1',
+        ];
+    }
+
+    private function assertSendsServiceType(string $expected, ?FulfillmentMode $fulfillment): void
+    {
+        $client = $this->createMock(JtExpressClient::class);
+        $client->method('customerCode')->willReturn('TEST-CUSTOMER-CODE');
+        $client->expects($this->once())
+            ->method('dispatch')
+            ->with(
+                'order/addOrder',
+                $this->callback(fn (array $body) => $body['serviceType'] === $expected)
+            )
+            ->willReturn(['code' => '1', 'msg' => 'success', 'data' => ['billCode' => 'BC001']]);
+
+        $driver = new JtExpressDriver($this->serviceTypeConfig(), $client);
+        $driver->createShipment(new ShipmentPayload(
+            sender: $this->makeAddress(),
+            recipient: $this->makeAddress(),
+            parcel: $this->makeParcel(),
+            serviceCode: 'EZ',
+            reference: 'ORDER-001',
+            fulfillment: $fulfillment,
+        ));
+    }
+
+    public function test_pickup_sends_the_mapped_pickup_service_type(): void
+    {
+        $this->assertSendsServiceType('1', FulfillmentMode::Pickup);
+    }
+
+    public function test_dropoff_sends_the_mapped_dropoff_service_type(): void
+    {
+        $this->assertSendsServiceType('6', FulfillmentMode::Dropoff);
+    }
+
+    /**
+     * Callers written before FulfillmentMode existed must keep working, so a missing
+     * mode falls back rather than throwing.
+     */
+    public function test_missing_fulfillment_falls_back_to_the_configured_default(): void
+    {
+        $this->assertSendsServiceType('1', null);
+    }
+
+    public function test_service_type_map_is_read_from_config_not_hardcoded(): void
+    {
+        $client = $this->createMock(JtExpressClient::class);
+        $client->method('customerCode')->willReturn('TEST-CUSTOMER-CODE');
+        $client->expects($this->once())
+            ->method('dispatch')
+            ->with(
+                'order/addOrder',
+                $this->callback(fn (array $body) => $body['serviceType'] === '99')
+            )
+            ->willReturn(['code' => '1', 'msg' => 'success', 'data' => ['billCode' => 'BC001']]);
+
+        $driver = new JtExpressDriver([
+            'service_type_map' => ['pickup' => '99', 'dropoff' => '6'],
+            'service_type_default' => '1',
+        ], $client);
+
+        $driver->createShipment(new ShipmentPayload(
+            sender: $this->makeAddress(),
+            recipient: $this->makeAddress(),
+            parcel: $this->makeParcel(),
+            serviceCode: 'EZ',
+            reference: 'ORDER-001',
+            fulfillment: FulfillmentMode::Pickup,
+        ));
     }
 }
