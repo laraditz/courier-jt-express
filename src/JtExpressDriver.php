@@ -87,7 +87,7 @@ class JtExpressDriver implements CourierDriver, HandlesWebhooks, ExtractsWebhook
                 'height' => (string) $payload->parcel->height,
             ],
             'remark' => $payload->remarks ?? '',
-        ], reference: $reference);
+        ] + $this->collectionWindow($payload), reference: $reference);
 
         return ShipmentMapper::map($inner['data'], $reference);
     }
@@ -361,6 +361,33 @@ class JtExpressDriver implements CourierDriver, HandlesWebhooks, ExtractsWebhook
         return abs(microtime(true) - ((int) $timestamp / 1000)) <= $tolerance
             ? null
             : WebhookRejection::TimestampInvalid;
+    }
+
+    /**
+     * The requested collection window, as J&T's addOrder expects it.
+     *
+     * Only meaningful for a pickup: there is nothing for J&T to schedule when the
+     * sender is bringing the parcel in themselves, and sending a window for a
+     * drop-off would describe a rider visit that is not going to happen.
+     *
+     * sendEndTime is optional in J&T's spec, so an open-ended window is sent as a
+     * start alone rather than being rejected or silently completed.
+     *
+     * @return array<string, string>
+     */
+    private function collectionWindow(ShipmentPayload $payload): array
+    {
+        if ($payload->fulfillment !== FulfillmentMode::Pickup || $payload->scheduledAt === null) {
+            return [];
+        }
+
+        $window = ['sendStartTime' => $payload->scheduledAt->format('Y-m-d H:i:s')];
+
+        if ($payload->scheduledUntil !== null) {
+            $window['sendEndTime'] = $payload->scheduledUntil->format('Y-m-d H:i:s');
+        }
+
+        return $window;
     }
 
     /**

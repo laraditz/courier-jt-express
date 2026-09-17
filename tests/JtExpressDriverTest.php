@@ -4,6 +4,7 @@ namespace Laraditz\Courier\JtExpress\Tests;
 
 use Laraditz\Courier\DTOs\Payloads\AvailabilityPayload;
 use Laraditz\Courier\DTOs\Payloads\RatePayload;
+use Carbon\Carbon;
 use Laraditz\Courier\DTOs\Payloads\ShipmentPayload;
 use Laraditz\Courier\Enums\FulfillmentMode;
 use Laraditz\Courier\DTOs\Results\CancelResult;
@@ -614,5 +615,85 @@ class JtExpressDriverTest extends TestCase
             reference: 'ORDER-001',
             fulfillment: FulfillmentMode::Pickup,
         ));
+    }
+
+    /**
+     * @param  callable(array<string, mixed>): bool  $assertBody
+     */
+    private function assertAddOrderBody(callable $assertBody, ShipmentPayload $payload): void
+    {
+        $client = $this->createMock(JtExpressClient::class);
+        $client->method('customerCode')->willReturn('TEST-CUSTOMER-CODE');
+        $client->expects($this->once())
+            ->method('dispatch')
+            ->with('order/addOrder', $this->callback($assertBody))
+            ->willReturn(['code' => '1', 'msg' => 'success', 'data' => ['billCode' => 'BC001']]);
+
+        (new JtExpressDriver($this->serviceTypeConfig(), $client))->createShipment($payload);
+    }
+
+    private function payloadWithWindow(?FulfillmentMode $fulfillment, ?Carbon $start, ?Carbon $end): ShipmentPayload
+    {
+        return new ShipmentPayload(
+            sender: $this->makeAddress(),
+            recipient: $this->makeAddress(),
+            parcel: $this->makeParcel(),
+            serviceCode: 'EZ',
+            scheduledAt: $start,
+            reference: 'ORDER-001',
+            fulfillment: $fulfillment,
+            scheduledUntil: $end,
+        );
+    }
+
+    /**
+     * Confirmed against the sandbox: sendStartTime/sendEndTime are not merely accepted,
+     * they survive the booking and come back on order/getOrders unchanged.
+     */
+    public function test_pickup_sends_the_collection_window(): void
+    {
+        $this->assertAddOrderBody(
+            fn (array $body) => ($body['sendStartTime'] ?? null) === '2026-09-18 09:00:00'
+                && ($body['sendEndTime'] ?? null) === '2026-09-18 13:00:00',
+            $this->payloadWithWindow(
+                FulfillmentMode::Pickup,
+                Carbon::parse('2026-09-18 09:00:00'),
+                Carbon::parse('2026-09-18 13:00:00'),
+            ),
+        );
+    }
+
+    public function test_dropoff_sends_no_collection_window(): void
+    {
+        $this->assertAddOrderBody(
+            fn (array $body) => ! array_key_exists('sendStartTime', $body)
+                && ! array_key_exists('sendEndTime', $body),
+            $this->payloadWithWindow(
+                FulfillmentMode::Dropoff,
+                Carbon::parse('2026-09-18 09:00:00'),
+                Carbon::parse('2026-09-18 13:00:00'),
+            ),
+        );
+    }
+
+    public function test_pickup_without_a_window_sends_no_window_fields(): void
+    {
+        $this->assertAddOrderBody(
+            fn (array $body) => ! array_key_exists('sendStartTime', $body)
+                && ! array_key_exists('sendEndTime', $body),
+            $this->payloadWithWindow(FulfillmentMode::Pickup, null, null),
+        );
+    }
+
+    /**
+     * An open-ended window is still a window: J&T's spec marks sendEndTime optional.
+     */
+    public function test_pickup_with_only_a_start_sends_just_the_start(): void
+    {
+        $this->assertAddOrderBody(
+            fn (array $body) => ($body['sendStartTime'] ?? null) === '2026-09-18 09:00:00'
+                && ! array_key_exists('sendEndTime', $body),
+            $this->payloadWithWindow(FulfillmentMode::Pickup, Carbon::parse('2026-09-18 09:00:00'), null),
+        );
     }
 }
